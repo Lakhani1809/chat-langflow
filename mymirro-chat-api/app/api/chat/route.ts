@@ -581,11 +581,11 @@ export async function POST(request: NextRequest) {
           }
         : undefined;
 
-    // Use visual outfits if we have them, otherwise fall back to text outfits
+    // Use visual outfits if we have them, otherwise undefined (ChatResponse expects VisualOutfit[])
     const response: ChatResponse = {
       intent,
       message: finalMessage,
-      outfits: visualOutfits.length > 0 ? visualOutfits : formattedOutput.outfits,
+      outfits: visualOutfits.length > 0 ? visualOutfits : undefined,
       items: formattedOutput.items,
       brands: formattedOutput.brands,
       packing_list: formattedOutput.packing_list,

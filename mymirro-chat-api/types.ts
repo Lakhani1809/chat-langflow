@@ -309,6 +309,7 @@ export type LogEntry = {
 export type StageTimings = {
   intentClassification?: StageTiming;
   wardrobeFetch?: StageTiming;
+  parallelInit?: StageTiming;
   fashionIntelligence?: StageTiming;
   colorAnalysis?: StageTiming;
   silhouetteAnalysis?: StageTiming;
@@ -319,6 +320,8 @@ export type StageTimings = {
   safetyFilter?: StageTiming;
   toneRewriter?: StageTiming;
   imageResolver?: StageTiming;
+  generalChat?: StageTiming;
+  analysis?: StageTiming;
   total?: StageTiming;
 };
 
@@ -345,4 +348,18 @@ export type DebugInfo = {
   memory?: Partial<ConversationMemory>;
   timings?: StageTimings;
   genderContext?: GenderContext;
+  optimization?: {
+    sessionKey?: string;
+    hadCachedAnalysis?: boolean;
+    fromCache?: Record<string, boolean>;
+    executionConfig?: {
+      runFIE?: boolean;
+      runAnalysis?: boolean;
+      runRules?: boolean;
+      canUseCache?: boolean;
+      requiresWardrobe?: boolean;
+      moduleModel?: string;
+    };
+    isContinuation?: boolean;
+  };
 };

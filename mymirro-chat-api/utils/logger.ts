@@ -43,6 +43,9 @@ export function recordStage(
   options?: {
     fallback?: boolean;
     moduleName?: string;
+    cached?: boolean;
+    fromCache?: Record<string, boolean>;
+    skipped?: Record<string, boolean>;
   }
 ): void {
   const endTime = Date.now();
