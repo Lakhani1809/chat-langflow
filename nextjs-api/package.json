@@ -1,0 +1,19 @@
+{
+  "name": "mymirro-chat-api",
+  "version": "1.0.0",
+  "description": "Next.js API route for MyMirro fashion stylist chat workflow",
+  "main": "app/api/chat/route.ts",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "next": "^14.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+
+
