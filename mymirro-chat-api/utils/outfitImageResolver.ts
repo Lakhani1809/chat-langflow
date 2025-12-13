@@ -38,7 +38,6 @@ const CATEGORY_TO_LAYER: Record<string, OutfitItemLayer> = {
   tee: "top",
   "t-shirt": "top",
   sweater: "top",
-  hoodie: "top",
   tank: "top",
   polo: "top",
   crop: "top",
