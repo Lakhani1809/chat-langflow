@@ -362,4 +362,333 @@ export type DebugInfo = {
     };
     isContinuation?: boolean;
   };
+  // V2 Debug fields
+  v2?: {
+    responseMode?: ResponseMode;
+    multiIntent?: MultiIntentResult;
+    canonicalMemory?: CanonicalMemory;
+    wardrobeCoverage?: WardrobeCoverageProfile;
+    confidences?: ConfidenceSummary;
+    hardRuleViolations?: RuleViolation[];
+    candidateCount?: number;
+    passedCandidates?: number;
+  };
+};
+
+// ============================================
+// V2: RESPONSE MODE TYPES
+// ============================================
+
+/**
+ * Response Mode determines what type of output is returned
+ * - visual_outfit: Full wardrobe-backed outfits with images
+ * - advisory_text: Purely textual advice, no outfits
+ * - shopping_comparison: Shopping decision assistance, no wardrobe outfits by default
+ * - mixed: Small wardrobe references optionally, not full VisualOutfit arrays
+ */
+export type ResponseMode = 
+  | "visual_outfit"
+  | "advisory_text"
+  | "shopping_comparison"
+  | "mixed";
+
+/**
+ * Output contract for response enforcement
+ */
+export type OutputContract = 
+  | "outfits_required"
+  | "outfits_optional"
+  | "no_outfits";
+
+// ============================================
+// V2: CONFIDENCE TYPES
+// ============================================
+
+/**
+ * Confidence score with basis and optional degradation reason
+ */
+export type ConfidenceScore = {
+  score: number; // 0..1
+  basis: string[]; // e.g., ["user_stated", "wardrobe_backed", "inferred"]
+  degrade_reason?: string;
+};
+
+/**
+ * Summary of all confidence scores for a request
+ */
+export type ConfidenceSummary = {
+  intent: ConfidenceScore;
+  memory: ConfidenceScore;
+  wardrobe: ConfidenceScore;
+  analysis: ConfidenceScore;
+  rules: ConfidenceScore;
+  final: ConfidenceScore;
+};
+
+/**
+ * Confidence-driven behavior thresholds
+ */
+export const CONFIDENCE_THRESHOLDS = {
+  LOW: 0.4,    // Ask clarifying question
+  MEDIUM: 0.7, // Provide hedged recommendation
+  HIGH: 1.0,   // Be decisive and specific
+} as const;
+
+// ============================================
+// V2: MULTI-INTENT TYPES
+// ============================================
+
+/**
+ * Multi-intent classification result
+ */
+export type MultiIntentResult = {
+  primary_intent: IntentType;
+  secondary_intents: IntentType[];
+  intent_confidence: ConfidenceScore;
+  rationale?: string; // Debug only
+};
+
+// ============================================
+// V2: CANONICAL MEMORY TYPES
+// ============================================
+
+/**
+ * Resolved preference with source and confidence
+ */
+export type ResolvedPreference = {
+  value: string;
+  source: "explicit" | "inferred" | "default";
+  confidence: number;
+  timestamp?: string;
+};
+
+/**
+ * Preference contradiction for conflict tracking
+ */
+export type PreferenceContradiction = {
+  field: string;
+  value1: string;
+  value2: string;
+  source1: string;
+  source2: string;
+};
+
+/**
+ * Canonical memory - resolved, conflict-free preferences
+ */
+export type CanonicalMemory = {
+  // Core preferences
+  fit_preference: ResolvedPreference;
+  vibes: string[]; // Resolved aesthetic vibes
+  color_likes: string[];
+  color_avoids: string[];
+  formality_preference: ResolvedPreference;
+  climate_context?: ResolvedPreference;
+  comfort_vs_style?: ResolvedPreference; // "comfort", "style", "balanced"
+  
+  // Hard negatives
+  do_not_suggest: string[];
+  
+  // Metadata
+  last_confirmed_preferences?: string; // ISO timestamp
+  contradictions: PreferenceContradiction[];
+  needs_clarification: boolean;
+  memory_confidence: ConfidenceScore;
+  
+  // Raw memory for fallback
+  rawMemory?: ConversationMemory;
+};
+
+// ============================================
+// V2: WARDROBE COVERAGE TYPES
+// ============================================
+
+/**
+ * Coverage level for a category
+ */
+export type CoverageLevel = "none" | "low" | "medium" | "high";
+
+/**
+ * Category coverage detail
+ */
+export type CategoryCoverage = {
+  count: number;
+  withImages: number;
+  level: CoverageLevel;
+};
+
+/**
+ * Complete wardrobe coverage profile
+ */
+export type WardrobeCoverageProfile = {
+  tops: CategoryCoverage;
+  bottoms: CategoryCoverage;
+  footwear: CategoryCoverage;
+  outerwear: CategoryCoverage;
+  accessories: CategoryCoverage;
+  ethnic: CategoryCoverage;
+  dresses: CategoryCoverage;
+  
+  // Summary
+  totalItems: number;
+  totalWithImages: number;
+  availableSlots: OutfitSlot[];
+  missingMandatorySlots: OutfitSlot[];
+  canCreateCompleteOutfit: boolean;
+};
+
+// ============================================
+// V2: OUTFIT SLOTS & COMPLETENESS TYPES
+// ============================================
+
+/**
+ * Outfit slot types
+ */
+export type OutfitSlot = 
+  | "upper_wear"
+  | "lower_wear"
+  | "footwear"
+  | "layering"
+  | "accessory";
+
+/**
+ * Mandatory slots for a complete outfit
+ */
+export const MANDATORY_SLOTS: OutfitSlot[] = ["upper_wear", "lower_wear", "footwear"];
+
+/**
+ * Optional slots
+ */
+export const OPTIONAL_SLOTS: OutfitSlot[] = ["layering", "accessory"];
+
+/**
+ * Outfit draft with structured slots (for rule evaluation)
+ */
+export type OutfitDraft = {
+  id: string;
+  title: string;
+  slots: {
+    upper_wear?: OutfitSlotItem;
+    lower_wear?: OutfitSlotItem;
+    footwear?: OutfitSlotItem;
+    layering?: OutfitSlotItem;
+    accessories?: OutfitSlotItem[]; // 0-2 max
+  };
+  why_it_works: string;
+  occasion?: string;
+  vibe?: string;
+  source: "llm" | "fallback";
+};
+
+/**
+ * Individual slot item
+ */
+export type OutfitSlotItem = {
+  itemId?: string | number; // If mapped to wardrobe
+  hint: string; // Text description
+  category: string;
+  subcategory?: string;
+  silhouette?: "slim" | "regular" | "relaxed" | "oversized" | "longline";
+  formality?: "casual" | "smart" | "formal";
+  season?: "hot" | "mild" | "cold";
+  aestheticTags?: string[];
+  colorFamily?: string;
+};
+
+// ============================================
+// V2: HARD RULES TYPES
+// ============================================
+
+/**
+ * Rule violation severity
+ */
+export type RuleSeverity = "block" | "warn";
+
+/**
+ * Rule violation details
+ */
+export type RuleViolation = {
+  ruleId: string;
+  severity: RuleSeverity;
+  message: string;
+  slotsInvolved: OutfitSlot[];
+  evidence?: string;
+};
+
+/**
+ * Hard rule evaluation result
+ */
+export type HardRuleResult = {
+  allowed: boolean;
+  violations: RuleViolation[];
+  scorePenalty: number;
+};
+
+/**
+ * Rule context for evaluation
+ */
+export type RuleContext = {
+  occasion?: string;
+  formality?: "casual" | "smart" | "formal";
+  climate?: "hot" | "mild" | "cold";
+  strictness?: "relaxed" | "normal" | "strict";
+  responseMode: ResponseMode;
+  hasWardrobeItems: boolean;
+};
+
+/**
+ * Soft rule from LLM
+ */
+export type SoftRule = {
+  id: string;
+  type: "prefer" | "avoid";
+  condition: string;
+  explanation: string;
+  weight: number; // 0-1
+};
+
+/**
+ * Rule configuration for tuning
+ */
+export type RuleConfig = {
+  enforceFormality: boolean;
+  enforceSilhouette: boolean;
+  enforceEthnicCoherence: boolean;
+  enforceClimateSanity: boolean;
+  strictnessLevel: "relaxed" | "normal" | "strict";
+};
+
+// ============================================
+// V2: SHOPPING COMPARISON TYPES
+// ============================================
+
+/**
+ * Shopping comparison output format
+ */
+export type ShoppingComparisonOutput = {
+  verdict: string; // "Buy X"
+  reasons: string[]; // 3 reasons tied to user context
+  alternative_when: string; // When the other option makes sense
+  wardrobe_styling_hint?: string; // Text only, no VisualOutfit
+};
+
+// ============================================
+// V2: EXTENDED EXECUTION CONFIG
+// ============================================
+
+/**
+ * V2 Execution configuration with response mode
+ */
+export type ExecutionConfigV2 = {
+  runFIE: boolean;
+  runAnalysis: boolean;
+  runRules: boolean;
+  canUseCache: boolean;
+  requiresWardrobe: boolean;
+  moduleModel: "gemini-2.5-flash-lite" | "gemini-2.0-flash";
+  // V2 additions
+  responseMode: ResponseMode;
+  outputContract: OutputContract;
+  generateCandidates: boolean;
+  candidateCount?: number;
 };

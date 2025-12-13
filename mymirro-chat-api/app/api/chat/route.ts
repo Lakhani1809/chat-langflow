@@ -1,8 +1,16 @@
 /**
- * MyMirro Chat API - Main Route Handler
+ * MyMirro Chat API - Main Route Handler V2
  * POST /api/chat
  * 
  * Orchestrates the complete multi-module AI stylist workflow
+ * 
+ * V2 FEATURES:
+ * - Canonical memory with conflict resolution
+ * - Confidence scoring with decisive/hedging behavior
+ * - Deterministic hard rules + LLM soft rules
+ * - Multi-intent handling
+ * - Response mode enforcement (visual_outfit, advisory_text, shopping_comparison)
+ * - Outfit completeness contract
  * 
  * OPTIMIZED FOR LATENCY:
  * - Intent-based execution map (skip unnecessary modules)
@@ -21,6 +29,12 @@ import type {
   VisualOutfit,
   WardrobeContext,
   ConversationMemory,
+  CanonicalMemory,
+  ConfidenceSummary,
+  ConfidenceScore,
+  ResponseMode,
+  WardrobeCoverageProfile,
+  MultiIntentResult,
 } from "../../../types";
 
 // Utils
@@ -37,6 +51,9 @@ import {
   composeBodyTypeResponse,
   formatFinalOutput,
   generateSuggestionPills,
+  composeFinalResponseV2,
+  composeShoppingComparisonV2,
+  composeClarifyingQuestionResponse,
 } from "../../../utils/finalComposer";
 import {
   createLogEntry,
@@ -47,6 +64,12 @@ import {
   finalizeLog,
   startStage,
 } from "../../../utils/logger";
+
+// V2: Canonical memory and confidence
+import { arbitrateMemory, DEFAULT_CANONICAL_MEMORY, formatCanonicalMemoryForPrompt } from "../../../utils/memoryArbiter";
+import { createConfidenceScore, combineConfidences, createDefaultConfidenceSummary } from "../../../utils/confidence";
+import { computeWardrobeCoverage, canCreateCompleteOutfits } from "../../../utils/wardrobeCoverage";
+import { detectWardrobeRequest } from "../../../utils/wardrobeRequestDetector";
 
 // Session caching & execution optimization
 import {
@@ -68,6 +91,9 @@ import { runAnalysisPipeline, type AnalysisPipelineResult } from "../../../analy
 
 // Specialized modules
 import { routeToModule, extractOutfitsFromOutput } from "../../../modules";
+
+// V2: Outfit generation with multi-candidate + rules
+import { generateOutfitsV2, canGenerateOutfits, convertDraftsToOutfits } from "../../../modules/outfit";
 
 export async function POST(request: NextRequest) {
   const totalStart = startStage("total");
@@ -120,12 +146,15 @@ export async function POST(request: NextRequest) {
     // Quick keyword-based intent (instant, no API call)
     const quickIntent = getIntentFromKeywords(message);
     
+    // V2: Check for explicit wardrobe request
+    const explicitWardrobeRequest = detectWardrobeRequest(message);
+    
     // Run memory + wardrobe fetch in parallel with LLM intent (if needed)
     const memory = buildConversationMemory(history);
     
-    // Parallel promises
+    // V2: Multi-intent classification now returns MultiIntentResult
     const intentPromise = quickIntent 
-      ? Promise.resolve({ intent: quickIntent as IntentType })
+      ? Promise.resolve(quickIntent)
       : classifyIntent(message, memory);
     
     const wardrobePromise = fetchWardrobeAndProfile(userId);
@@ -139,17 +168,46 @@ export async function POST(request: NextRequest) {
     recordStage(logEntry, "parallelInit", parallelStart, true);
 
     // ========================================
-    // STEP 2: Extract Intent
+    // STEP 2: Extract Intent (V2: Multi-intent + Confidence)
     // ========================================
     let intent: IntentType;
+    let secondaryIntents: IntentType[] = [];
+    let intentConfidence = createConfidenceScore(0.7, ["inferred"]);
     
     if (intentResult.status === "fulfilled") {
-      intent = intentResult.value.intent;
-      console.log(`${quickIntent ? "⚡" : "🤖"} Intent: ${intent}`);
+      const result = intentResult.value;
+      // Handle both quick intent (IntentType) and LLM result (MultiIntentResult)
+      if (typeof result === "string") {
+        // Quick intent returns just IntentType
+        intent = result as IntentType;
+        intentConfidence = createConfidenceScore(0.8, ["keyword_match"]);
+      } else if (result && typeof result === "object" && "primary_intent" in result) {
+        // LLM classification returns MultiIntentResult
+        const multiResult = result as unknown as MultiIntentResult;
+        intent = multiResult.primary_intent;
+        secondaryIntents = multiResult.secondary_intents || [];
+        intentConfidence = multiResult.intent_confidence;
+        console.log(`${quickIntent ? "⚡" : "🤖"} Intent: ${intent} (confidence: ${intentConfidence.score.toFixed(2)})`);
+        if (secondaryIntents.length > 0) {
+          console.log(`   Secondary: ${secondaryIntents.join(", ")}`);
+        }
+      } else if (result && typeof result === "object" && "intent" in result) {
+        // Legacy IntentResult
+        intent = (result as { intent: IntentType }).intent;
+      } else {
+        intent = "general_chat";
+      }
     } else {
       intent = "general_chat";
+      intentConfidence = createConfidenceScore(0.3, ["default_fallback"], "Intent classification failed");
       recordError(logEntry, `Intent classification failed: ${intentResult.reason}`);
       console.log(`⚠️ Intent fallback: general_chat`);
+    }
+    
+    if (!quickIntent) {
+      console.log(`🤖 Intent: ${intent}`);
+    } else {
+      console.log(`⚡ Intent: ${intent} (keyword match)`);
     }
     
     setIntent(logEntry, intent);
@@ -171,10 +229,28 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================
+    // V2 STEP 3.5: Compute Wardrobe Coverage Profile
+    // ========================================
+    const wardrobeCoverage = computeWardrobeCoverage(wardrobeContext.wardrobe_items);
+    const { canGenerate: canGenerateCompleteOutfits, missingSlots: missingMandatorySlots } = 
+      canGenerateOutfits(wardrobeCoverage);
+    
+    console.log(`📊 Wardrobe coverage: ${wardrobeCoverage.totalItems} items, ${wardrobeCoverage.totalWithImages} with images`);
+    if (!canGenerateCompleteOutfits) {
+      console.log(`   Missing mandatory: ${missingMandatorySlots.join(", ")}`);
+    }
+
+    // ========================================
     // STEP 4: Get Execution Config (CRITICAL OPTIMIZATION)
     // ========================================
     const execConfig = getExecutionConfig(intent);
     logExecutionPlan(intent, hasCachedAnalysis);
+    
+    // V2: Determine response mode based on intent
+    const responseMode: ResponseMode = 
+      intent === "shopping_help" ? "shopping_comparison" : 
+      ["outfit_generation", "event_styling", "travel_packing"].includes(intent) ? "visual_outfit" : 
+      "advisory_text";
 
     // ========================================
     // STEP 5: Handle General Chat Shortcut (No analysis needed)
@@ -354,6 +430,47 @@ export async function POST(request: NextRequest) {
       };
       console.log(`⚠️ Using fallback analysis results`);
     }
+
+    // ========================================
+    // V2 STEP 6.5: Arbitrate Memory → Canonical Preferences
+    // ========================================
+    const canonicalMemory: CanonicalMemory = arbitrateMemory(
+      memory,
+      message,
+      analysisResults.fashionIntelligence,
+      cachedSession?.canonicalMemory
+    );
+    
+    // Update cache with canonical memory
+    updateSessionCache(sessionKey, { canonicalMemory });
+    
+    console.log(`🧠 Canonical memory: confidence=${canonicalMemory.memory_confidence.score.toFixed(2)}, needs_clarification=${canonicalMemory.needs_clarification}`);
+    
+    // V2: Build confidence summary
+    const wardrobeConfidence = createConfidenceScore(
+      wardrobeCoverage.totalItems > 10 ? 0.9 : wardrobeCoverage.totalItems > 3 ? 0.7 : 0.4,
+      wardrobeCoverage.totalItems > 0 ? ["wardrobe_backed"] : ["low_wardrobe_coverage"],
+      wardrobeCoverage.totalItems === 0 ? "No wardrobe items" : undefined
+    );
+    
+    const analysisConfidence = createConfidenceScore(
+      analysisResults.fromCache.fie ? 0.8 : 0.7,
+      analysisResults.fromCache.fie ? ["cached"] : ["llm_generated"]
+    );
+    
+    const rulesConfidence = createConfidenceScore(
+      analysisResults.fromCache.rules ? 0.85 : 0.75,
+      analysisResults.fromCache.rules ? ["cached"] : ["llm_generated"]
+    );
+    
+    // combineConfidences returns a ConfidenceSummary with all fields
+    const confidenceSummary = combineConfidences(
+      intentConfidence, 
+      canonicalMemory.memory_confidence, 
+      wardrobeConfidence,
+      analysisConfidence,
+      rulesConfidence
+    );
 
     // ========================================
     // STEP 7: Handle Special Intents (Color/Body Type)

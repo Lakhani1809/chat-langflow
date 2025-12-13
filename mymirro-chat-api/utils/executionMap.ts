@@ -1,10 +1,20 @@
 /**
  * Intent-Based Execution Map
- * Determines which modules to run based on user intent
- * Saves unnecessary LLM calls for simple intents
+ * V2: Includes response mode, output contract, and candidate generation
  */
 
-import type { IntentType } from "../types";
+import type { 
+  IntentType, 
+  ResponseMode, 
+  OutputContract,
+  ExecutionConfigV2,
+  MultiIntentResult,
+} from "../types";
+import { 
+  detectWardrobeRequest, 
+  inferResponseMode, 
+  getOutputContract,
+} from "./wardrobeRequestDetector";
 
 /**
  * Execution configuration for each intent
@@ -226,5 +236,226 @@ export function logExecutionPlan(intent: IntentType, hasCachedAnalysis: boolean)
   console.log(`   - Rules: ${config.runRules ? "MERGED" : "SKIP"}`);
   console.log(`   - Model: ${config.moduleModel}`);
   console.log(`   - Est. LLM calls: ${hasCachedAnalysis && config.canUseCache ? calls.withCache : calls.withoutCache}`);
+}
+
+// ============================================
+// V2: EXECUTION MAP WITH RESPONSE MODE
+// ============================================
+
+/**
+ * V2 Execution Map - includes response mode and output contract
+ */
+export const EXECUTION_MAP_V2: Record<IntentType, Omit<ExecutionConfigV2, "responseMode" | "outputContract">> = {
+  outfit_generation: {
+    runFIE: true,
+    runAnalysis: true,
+    runRules: true,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: true,
+    candidateCount: 8,
+  },
+  
+  event_styling: {
+    runFIE: true,
+    runAnalysis: true,
+    runRules: true,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: true,
+    candidateCount: 8,
+  },
+  
+  travel_packing: {
+    runFIE: true,
+    runAnalysis: true,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: true,
+    candidateCount: 6,
+  },
+  
+  item_recommendation: {
+    runFIE: true,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: false,
+  },
+  
+  category_recommendation: {
+    runFIE: true,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: false,
+  },
+  
+  shopping_help: {
+    runFIE: true,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: false, // Shopping doesn't require wardrobe by default
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: false,
+  },
+  
+  trend_analysis: {
+    runFIE: false,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: false,
+    requiresWardrobe: false,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: false,
+  },
+  
+  color_analysis: {
+    runFIE: true,
+    runAnalysis: true,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.5-flash-lite",
+    generateCandidates: false,
+  },
+  
+  body_type_advice: {
+    runFIE: false,
+    runAnalysis: true,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.5-flash-lite",
+    generateCandidates: false,
+  },
+  
+  wardrobe_query: {
+    runFIE: false,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: false,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.5-flash-lite",
+    generateCandidates: false,
+  },
+  
+  continuation_query: {
+    runFIE: false,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: true,
+    requiresWardrobe: true,
+    moduleModel: "gemini-2.0-flash",
+    generateCandidates: true,
+    candidateCount: 6,
+  },
+  
+  general_chat: {
+    runFIE: false,
+    runAnalysis: false,
+    runRules: false,
+    canUseCache: false,
+    requiresWardrobe: false,
+    moduleModel: "gemini-2.5-flash-lite",
+    generateCandidates: false,
+  },
+};
+
+/**
+ * V2: Get full execution config with response mode
+ */
+export function getExecutionConfigV2(
+  message: string,
+  intentResult: MultiIntentResult
+): ExecutionConfigV2 {
+  const baseConfig = EXECUTION_MAP_V2[intentResult.primary_intent] || EXECUTION_MAP_V2.general_chat;
+  
+  // Determine response mode based on message and intent
+  const isWardrobeRequest = detectWardrobeRequest(message);
+  const responseMode = inferResponseMode(message, intentResult.primary_intent);
+  const outputContract = getOutputContract(responseMode, isWardrobeRequest);
+  
+  // Adjust requiresWardrobe based on response mode
+  // Explicit wardrobe request always requires wardrobe
+  const requiresWardrobe = responseMode === "visual_outfit" || 
+    isWardrobeRequest ||
+    baseConfig.requiresWardrobe;
+  
+  return {
+    ...baseConfig,
+    responseMode,
+    outputContract,
+    requiresWardrobe,
+    // Only generate candidates if outputContract allows outfits
+    generateCandidates: baseConfig.generateCandidates && outputContract !== "no_outfits",
+  };
+}
+
+/**
+ * V2: Log execution plan with response mode
+ */
+export function logExecutionPlanV2(
+  config: ExecutionConfigV2,
+  intent: IntentType,
+  hasCachedAnalysis: boolean
+): void {
+  console.log(`📋 V2 Execution Plan for "${intent}":`);
+  console.log(`   - Response Mode: ${config.responseMode}`);
+  console.log(`   - Output Contract: ${config.outputContract}`);
+  console.log(`   - FIE: ${config.runFIE ? (hasCachedAnalysis && config.canUseCache ? "CACHED" : "RUN") : "SKIP"}`);
+  console.log(`   - Analysis: ${config.runAnalysis ? (hasCachedAnalysis && config.canUseCache ? "CACHED" : "RUN") : "SKIP"}`);
+  console.log(`   - Rules: ${config.runRules ? "RUN" : "SKIP"}`);
+  console.log(`   - Generate Candidates: ${config.generateCandidates ? `YES (${config.candidateCount || 6})` : "NO"}`);
+  console.log(`   - Model: ${config.moduleModel}`);
+}
+
+/**
+ * V2: Check if outfits should be generated
+ */
+export function shouldGenerateOutfits(config: ExecutionConfigV2): boolean {
+  return config.outputContract !== "no_outfits" && config.generateCandidates;
+}
+
+/**
+ * V2: Check if outfits are required (must not be empty)
+ */
+export function areOutfitsRequired(config: ExecutionConfigV2): boolean {
+  return config.outputContract === "outfits_required";
+}
+
+/**
+ * V2: Get default response mode for intent (without message context)
+ */
+export function getDefaultResponseMode(intent: IntentType): ResponseMode {
+  switch (intent) {
+    case "outfit_generation":
+    case "event_styling":
+    case "travel_packing":
+    case "continuation_query":
+      return "visual_outfit";
+    
+    case "shopping_help":
+    case "item_recommendation":
+      return "shopping_comparison";
+    
+    case "trend_analysis":
+    case "color_analysis":
+    case "body_type_advice":
+    case "general_chat":
+    case "wardrobe_query":
+    case "category_recommendation":
+    default:
+      return "advisory_text";
+  }
 }
 

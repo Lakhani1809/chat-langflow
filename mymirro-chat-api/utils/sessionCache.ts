@@ -11,10 +11,12 @@ import type {
   BodyTypeAnalysis,
   RulesEngineOutput,
   GenderContext,
+  CanonicalMemory,
 } from "../types";
 
 /**
  * Cached analysis data for a session
+ * V2: Now includes canonicalMemory for preference resolution
  */
 export interface SessionCache {
   fashionIntelligence?: FashionIntelligence;
@@ -24,6 +26,7 @@ export interface SessionCache {
   rules?: RulesEngineOutput;
   genderContext?: GenderContext;
   lastOutfits?: Array<{ title: string; items: string[] }>;
+  canonicalMemory?: CanonicalMemory; // V2: Canonical preferences
   timestamp: number;
 }
 
