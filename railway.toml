@@ -4,8 +4,7 @@ dockerfilePath = "mymirro-chat-api/Dockerfile"
 watchPatterns = ["mymirro-chat-api/**"]
 
 [deploy]
-startCommand = "npm start"
-healthcheckPath = "/api/test-env"
+healthcheckPath = "/api/health_check"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
