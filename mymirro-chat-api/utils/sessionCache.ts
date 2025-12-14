@@ -17,6 +17,7 @@ import type {
 /**
  * Cached analysis data for a session
  * V2: Now includes canonicalMemory for preference resolution
+ * V3: Adds clarification tracking to avoid repeated questions
  */
 export interface SessionCache {
   fashionIntelligence?: FashionIntelligence;
@@ -27,6 +28,14 @@ export interface SessionCache {
   genderContext?: GenderContext;
   lastOutfits?: Array<{ title: string; items: string[] }>;
   canonicalMemory?: CanonicalMemory; // V2: Canonical preferences
+  // V3: Clarification tracking
+  hasAskedClarification?: boolean; // True if we've already asked a clarifying question
+  lastClarificationQuestion?: string; // The question we asked
+  clarificationContext?: { // Context from clarification
+    occasion?: string;
+    vibe?: string;
+    formality?: string;
+  };
   timestamp: number;
 }
 

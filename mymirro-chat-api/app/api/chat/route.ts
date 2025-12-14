@@ -67,6 +67,9 @@ import {
 
 // V2: Canonical memory and confidence
 import { arbitrateMemory, DEFAULT_CANONICAL_MEMORY, formatCanonicalMemoryForPrompt } from "../../../utils/memoryArbiter";
+
+// V3: Smart clarification
+import { needsClarification, isAnsweringClarification, getComprehensivePromptInstruction } from "../../../utils/clarificationDetector";
 import { createConfidenceScore, combineConfidences, createDefaultConfidenceSummary } from "../../../utils/confidence";
 import { computeWardrobeCoverage, canCreateCompleteOutfits } from "../../../utils/wardrobeCoverage";
 import { detectWardrobeRequest } from "../../../utils/wardrobeRequestDetector";
@@ -284,6 +287,61 @@ export async function POST(request: NextRequest) {
           suggestion_pills: ["Outfit for today", "What's trending?", "My wardrobe", "Shopping help"],
         });
       }
+    }
+
+    // ========================================
+    // STEP 5.5: V3 Smart Clarification Check
+    // Ask ONE clarifying question if context is missing
+    // ========================================
+    const hasAlreadyAskedClarification = cachedSession?.hasAskedClarification || false;
+    
+    // Check if user is responding to our previous clarification
+    const isAnsweringPrevious = isAnsweringClarification(
+      message, 
+      cachedSession?.lastClarificationQuestion
+    );
+    
+    // If user is answering, extract their context and proceed
+    if (isAnsweringPrevious && cachedSession?.lastClarificationQuestion) {
+      console.log("✅ User answered clarification - proceeding with response");
+      // Update cache to mark clarification as handled
+      updateSessionCache(sessionKey, { 
+        hasAskedClarification: true,
+        lastClarificationQuestion: undefined,
+      });
+    }
+    
+    // Check if we need clarification (only for outfit-related intents)
+    const clarificationResult = needsClarification(
+      intent,
+      message,
+      memory,
+      cachedSession?.fashionIntelligence,
+      hasAlreadyAskedClarification
+    );
+    
+    // If we need clarification AND haven't asked before, ask now
+    if (clarificationResult.needsClarification && !hasAlreadyAskedClarification) {
+      console.log(`❓ Asking clarification: "${clarificationResult.clarificationQuestion}"`);
+      
+      // Store that we've asked
+      updateSessionCache(sessionKey, {
+        hasAskedClarification: true,
+        lastClarificationQuestion: clarificationResult.clarificationQuestion,
+      });
+      
+      const response: ChatResponse = {
+        intent,
+        message: clarificationResult.clarificationQuestion || "What's the occasion?",
+        suggestion_pills: clarificationResult.suggestionPills || [
+          "Casual day out", "Work/Office", "Date night", "Party vibes", "Just everyday"
+        ],
+      };
+      
+      setResponseSize(logEntry, response);
+      finalizeLog(logEntry);
+      
+      return NextResponse.json(response);
     }
 
     // ========================================
