@@ -1,12 +1,12 @@
-src/frontend/node_modules
-src/frontend/build
-src/frontend/coverage
-src/frontend/test-results
-src/frontend/playwright-report
-src/frontend/.dspy_cache
-**/.DS_Store
-**/__pycache__
-**/*.pyc
-**/.pytest_cache
-**/.venv
-**/.env
+# Ignore everything except mymirro-chat-api
+*
+
+# Include mymirro-chat-api directory
+!mymirro-chat-api/
+!mymirro-chat-api/**
+
+# But still exclude node_modules and build artifacts from mymirro-chat-api
+mymirro-chat-api/node_modules
+mymirro-chat-api/.next
+mymirro-chat-api/coverage
+mymirro-chat-api/test-results
