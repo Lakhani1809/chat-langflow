@@ -1,0 +1,15 @@
+# Nixpacks configuration for Railway
+# Build from mymirro-chat-api subdirectory
+
+[phases.setup]
+nixPkgs = ["nodejs-18_x"]
+
+[phases.install]
+cmds = ["cd mymirro-chat-api && npm ci"]
+
+[phases.build]
+cmds = ["cd mymirro-chat-api && npm run build"]
+
+[start]
+cmd = "cd mymirro-chat-api && npm start"
+

@@ -1,11 +1,12 @@
 [build]
-builder = "dockerfile"
-dockerfilePath = "Dockerfile"
+builder = "nixpacks"
 watchPatterns = ["mymirro-chat-api/**"]
+
+[build.nixpacks]
+nixPkgs = ["nodejs-18_x"]
 
 [deploy]
 healthcheckPath = "/api/health_check"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
-
