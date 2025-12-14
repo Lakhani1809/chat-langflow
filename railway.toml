@@ -1,6 +1,6 @@
 [build]
 builder = "dockerfile"
-dockerfilePath = "mymirro-chat-api/Dockerfile"
+dockerfilePath = "Dockerfile"
 watchPatterns = ["mymirro-chat-api/**"]
 
 [deploy]
