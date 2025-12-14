@@ -103,6 +103,7 @@ export type UserProfile = {
   preferred_colors?: string[];
   avoided_colors?: string[];
   size_info?: Record<string, string>;
+  avatar_image_url?: string;
 };
 
 // ============================================

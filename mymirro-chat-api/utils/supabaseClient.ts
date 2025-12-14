@@ -75,8 +75,8 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile> {
   }
 
   try {
-    // Include gender in the select
-    const url = `${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}&select=body_type,gender,style_keywords,preferred_colors,avoided_colors`;
+    // Include gender and avatar in the select
+    const url = `${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}&select=body_type,gender,style_keywords,preferred_colors,avoided_colors,avatar_image_url`;
 
     const response = await fetch(url, {
       method: "GET",
@@ -109,6 +109,7 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile> {
           style_keywords: parseJsonArray(profile.style_keywords),
           preferred_colors: parseJsonArray(profile.preferred_colors),
           avoided_colors: parseJsonArray(profile.avoided_colors),
+          avatar_image_url: profile.avatar_image_url ? String(profile.avatar_image_url) : undefined,
         };
       }
     }

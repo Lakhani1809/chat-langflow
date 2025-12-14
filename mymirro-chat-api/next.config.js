@@ -9,6 +9,8 @@ const nextConfig = {
     // Ensure TypeScript errors fail the build
     ignoreBuildErrors: false,
   },
+  // Enable standalone output for Docker
+  output: 'standalone',
 };
 
 module.exports = nextConfig;
