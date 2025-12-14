@@ -1,6 +1,7 @@
 /**
  * Final Stylist Response Composer
  * V2: Shopping comparison framework + decisiveness + confidence-aware behavior
+ * V3: Engagement engine integration - keeps conversations alive
  */
 
 import { callGeminiJson, GEMINI_FLASH } from "./geminiClient";
@@ -23,6 +24,11 @@ import type {
 import { formatMemoryForContext } from "./memory";
 import { formatCanonicalMemoryForPrompt, getClarifyingQuestion } from "./memoryArbiter";
 import { getConfidenceBehavior, getHedgingPhrase, getDecisivePhrase } from "./confidence";
+import { 
+  generateEngagement, 
+  shouldShowGapMessage,
+  type EngagementResult,
+} from "./engagementEngine";
 
 const FALLBACK_OUTPUT: FinalStylistOutput = {
   message: "I'd love to help you with your style! Let me know what you're looking for.",
@@ -363,13 +369,30 @@ ${getResponseStructure()}`;
   const hasPackingList = response.packing_list && response.packing_list.length > 0;
   const hasTrendSummary = !!response.trend_summary;
 
-  response.suggestion_pills = generateSuggestionPills(
+  // V3: Generate engagement content
+  const conversationTurn = memory?.recentUserMessages?.length || 1;
+  const engagement = generateEngagement(
     intent,
+    wardrobeContext,
     hasOutfits || false,
-    hasBrands || false,
-    hasPackingList || false,
-    hasTrendSummary
+    conversationTurn,
+    memory
   );
+
+  // Use engagement pills instead of standard pills (more engaging)
+  response.suggestion_pills = engagement.engagementPills;
+
+  // Append next step suggestion to message if not already long
+  if (response.message && response.message.length < 300) {
+    // Add next step as a new line
+    response.message = `${response.message}\n\n${engagement.nextStepSuggestion}`;
+    
+    // Add wardrobe gap message if appropriate
+    if (engagement.wardrobeGapMessage && shouldShowGapMessage(conversationTurn, wardrobeContext.wardrobe_items.length)) {
+      response.extra_tips = response.extra_tips || [];
+      response.extra_tips.push(engagement.wardrobeGapMessage);
+    }
+  }
 
   return response;
 }
