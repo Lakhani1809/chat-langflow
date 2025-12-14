@@ -242,6 +242,67 @@ export async function composeFinalResponse(
   // Build module output summary
   const moduleOutputStr = JSON.stringify(moduleOutput, null, 2);
 
+  // Determine if this intent should generate outfits
+  const outfitIntents: IntentType[] = [
+    "outfit_generation", 
+    "event_styling", 
+    "travel_packing", 
+    "continuation_query"
+  ];
+  const shouldGenerateOutfits = outfitIntents.includes(intent);
+
+  // Build intent-specific JSON structure
+  const getResponseStructure = () => {
+    if (shouldGenerateOutfits) {
+      return `{
+  "message": "Short Gen-Z friendly message with emoji (2-3 sentences max)...",
+  "outfits": [
+    {
+      "title": "Catchy outfit name",
+      "items": ["item 1", "item 2", "item 3"],
+      "why_it_works": "One short natural sentence"
+    }
+  ],
+  "extra_tips": ["brief tip 1", "brief tip 2"]
+}`;
+    } else if (intent === "trend_analysis") {
+      return `{
+  "message": "Short Gen-Z friendly message about the trends with emoji (2-3 sentences max)...",
+  "trend_summary": "Key trends and insights from the module output",
+  "extra_tips": ["how to incorporate trend 1", "how to incorporate trend 2"]
+}`;
+    } else if (intent === "shopping_help") {
+      return `{
+  "message": "Short Gen-Z friendly shopping advice with emoji (2-3 sentences max)...",
+  "items": ["recommended item 1", "recommended item 2"],
+  "brands": ["brand suggestion 1", "brand suggestion 2"],
+  "extra_tips": ["shopping tip 1", "shopping tip 2"]
+}`;
+    } else {
+      return `{
+  "message": "Short Gen-Z friendly response with emoji (2-3 sentences max)...",
+  "extra_tips": ["helpful tip 1", "helpful tip 2"]
+}`;
+    }
+  };
+
+  // Get intent-specific instructions
+  const getIntentInstructions = () => {
+    if (shouldGenerateOutfits) {
+      return `3. Include the outfit suggestions from the module output
+4. The "why_it_works" should be 1 SHORT natural sentence`;
+    } else if (intent === "trend_analysis") {
+      return `3. Focus on trends and fashion insights - DO NOT generate outfit suggestions
+4. Explain what's trending and how to incorporate it generally`;
+    } else if (intent === "shopping_help") {
+      return `3. Focus on shopping advice and recommendations - DO NOT generate complete outfit suggestions
+4. Recommend specific items or brands to look for`;
+    } else {
+      return `3. Answer the user's question directly
+4. Be helpful and conversational`;
+    }
+  };
+
   // OPTIMIZED PROMPT: Includes rules reasoning + Gen-Z tone directly
   const prompt = `You are MyMirro, a world-class AI personal stylist for Gen-Z and young professionals in India.
 
@@ -270,8 +331,7 @@ Create the final response for the user. You're their stylish bestie helping them
 Requirements:
 1. Write in Gen-Z friendly tone as per the tone instruction above
 2. Keep it SHORT - 2-3 sentences max for the message
-3. Include the outfit suggestions from the module output (if any)
-4. The "why_it_works" should be 1 SHORT natural sentence
+${getIntentInstructions()}
 5. Add 2 practical extra tips (keep them brief)
 6. Sound like their fashion bestie, not a bot
 
@@ -281,24 +341,14 @@ TONE MUST BE:
 - NO "I recommend" or "I suggest" - just tell them what slaps
 
 DO NOT:
-- Invent new outfit suggestions (use what's in module output)
+- ${shouldGenerateOutfits ? "Invent new outfit suggestions (use what's in module output)" : "Generate outfit suggestions - this is NOT an outfit request"}
 - Make the message too long or formal
 - Sound robotic or generic
 - Use corporate/marketing language
 
-IMPORTANT: Return ONLY valid JSON, no other text.
+IMPORTANT: Return ONLY valid JSON matching the structure below, no other text.
 
-{
-  "message": "Short Gen-Z friendly message with emoji (2-3 sentences max)...",
-  "outfits": [
-    {
-      "title": "Catchy outfit name",
-      "items": ["item 1", "item 2", "item 3"],
-      "why_it_works": "One short natural sentence"
-    }
-  ],
-  "extra_tips": ["brief tip 1", "brief tip 2"]
-}`;
+${getResponseStructure()}`;
 
   const response = await callGeminiJson<FinalStylistOutput>(prompt, FALLBACK_OUTPUT, {
     model: GEMINI_FLASH, // Use flash model for final response
