@@ -2,10 +2,16 @@
  * Engagement Engine
  * 
  * Keeps users engaged and promotes product features:
- * 1. Detects wardrobe gaps → suggests uploading items
+ * 1. Detects wardrobe gaps → suggests uploading items (V4: ONE honest line)
  * 2. Promotes features → Style Check, wardrobe analysis, etc.
  * 3. Generates compelling next steps → never let conversation die
  * 4. Contextual engagement hooks → based on conversation flow
+ * 
+ * V4 Rules:
+ * - Wardrobe gap message is ONE honest line before CTAs
+ * - Do not block outfit generation due to gaps
+ * - Do not repeat gap message more than once per session
+ * - Gap message overrides feature-promotion CTAs
  */
 
 import type { 
@@ -116,18 +122,28 @@ export function detectWardrobeGaps(
   // Check total item count
   const totalItems = items.length;
   
-  // Generate message
+  // V4: Generate ONE honest line about gaps (not promotional fluff)
+  // This acknowledges the limitation while still providing value
   let gapMessage: string | null = null;
   
   if (totalItems === 0) {
-    gapMessage = "📸 I don't see any items in your wardrobe yet! Upload some pieces and I can create amazing outfits for you.";
-  } else if (totalItems < 5) {
-    gapMessage = `📸 You have ${totalItems} item${totalItems > 1 ? 's' : ''} - upload more to unlock better outfit combos!`;
-  } else if (missingCategories.length >= 2) {
-    gapMessage = `💡 Pro tip: Adding ${missingCategories.slice(0, 2).join(' and ')} would give you way more outfit options!`;
-  } else if (suggestedItems.length > 0) {
-    gapMessage = `✨ Quick win: Upload ${suggestedItems[0]} to complete more looks!`;
+    // Empty wardrobe - be direct
+    gapMessage = "I don't have any wardrobe items to work with yet — upload a few pieces and I'll create outfits from your actual clothes.";
+  } else if (missingCategories.includes('footwear')) {
+    // Missing footwear is the most limiting
+    gapMessage = "I can build stronger outfits once you add some footwear — for now, here's the best option with what you have.";
+  } else if (missingCategories.includes('bottoms')) {
+    // Missing bottoms is also very limiting
+    gapMessage = "Adding some bottoms to your wardrobe would unlock way more complete looks — styling with what we have for now.";
+  } else if (missingCategories.includes('basic tops')) {
+    // Missing basics limits versatility
+    gapMessage = "A basic tee or shirt would give you more outfit flexibility — working with your current pieces.";
+  } else if (totalItems < 5 && missingCategories.length > 0) {
+    // Small wardrobe with gaps
+    const missingItem = missingCategories[0];
+    gapMessage = `Your wardrobe is light on ${missingItem} — add some and I'll have more to work with.`;
   }
+  // V4: Don't spam gap messages for large wardrobes or minor gaps
 
   return {
     missingCategories,

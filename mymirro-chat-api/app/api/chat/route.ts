@@ -98,6 +98,14 @@ import { routeToModule, extractOutfitsFromOutput } from "../../../modules";
 // V2: Outfit generation with multi-candidate + rules
 import { generateOutfitsV2, canGenerateOutfits, convertDraftsToOutfits } from "../../../modules/outfit";
 
+// V3: Stylist Decision Layer - Forces decisive, non-hedging responses
+import { 
+  makeStylistDecision, 
+  extractComparisonOptions,
+  type StylistDecision,
+} from "../../../utils/stylistDecision";
+import { getStylistMode } from "../../../utils/executionMap";
+
 export async function POST(request: NextRequest) {
   const totalStart = startStage("total");
   let logEntry = createLogEntry("unknown", "");
@@ -531,6 +539,34 @@ export async function POST(request: NextRequest) {
     );
 
     // ========================================
+    // V3 STEP 6.6: Stylist Decision Layer
+    // Forces a single clear direction - no hedging allowed
+    // ========================================
+    
+    // Extract comparison options if this is a comparison query
+    const comparisonOptions = extractComparisonOptions(message);
+    
+    // Get the stylist mode for this intent
+    const stylistMode = getStylistMode(intent);
+    
+    // Make the decisive call
+    const stylistDecision = makeStylistDecision({
+      intent,
+      options: comparisonOptions.length > 0 ? comparisonOptions : undefined,
+      canonicalMemory,
+      wardrobeCoverage,
+      confidence: confidenceSummary,
+      outputContract: responseMode === "visual_outfit" ? "outfits_required" : 
+                      responseMode === "advisory_text" ? "no_outfits" : "outfits_optional",
+      userMessage: message,
+    });
+    
+    console.log(`🎯 Stylist decision: ${stylistDecision.decisionType}, mode: ${stylistMode}`);
+    if (stylistDecision.chosenOption) {
+      console.log(`   Chosen: "${stylistDecision.chosenOption}" | Rationale: ${stylistDecision.rationale}`);
+    }
+
+    // ========================================
     // STEP 7: Handle Special Intents (Color/Body Type)
     // OPTIMIZED: Tone rewriting merged into composer
     // ========================================
@@ -637,7 +673,7 @@ export async function POST(request: NextRequest) {
     let composedResponse;
 
     try {
-      // OPTIMIZED: Pass fashion intelligence for better context
+      // V3: Pass stylist decision for decisive responses
       composedResponse = await composeFinalResponse(
         intent,
         message,
@@ -649,12 +685,14 @@ export async function POST(request: NextRequest) {
           color: analysisResults.colorAnalysis,
           silhouette: analysisResults.silhouetteAnalysis,
           bodyType: analysisResults.bodyTypeAnalysis,
-          fashionIntelligence: analysisResults.fashionIntelligence, // Added for merged rules
+          fashionIntelligence: analysisResults.fashionIntelligence,
         },
-        memory
+        memory,
+        stylistDecision, // V3: Pass decision for decisive behavior
+        wardrobeCoverage // V3: Pass for wardrobe gap messaging
       );
 
-      console.log(`✍️ Final response composed (with Gen-Z tone)`);
+      console.log(`✍️ Final response composed (decisive stylist mode: ${stylistMode})`);
       recordStage(logEntry, "finalComposer", composerStart, true);
     } catch (error) {
       recordStage(logEntry, "finalComposer", composerStart, false, { fallback: true });

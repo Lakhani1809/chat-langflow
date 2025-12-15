@@ -2,6 +2,7 @@
  * Final Stylist Response Composer
  * V2: Shopping comparison framework + decisiveness + confidence-aware behavior
  * V3: Engagement engine integration - keeps conversations alive
+ * V4: Stylist Decision Layer - Forces decisive, non-hedging responses
  */
 
 import { callGeminiJson, GEMINI_FLASH } from "./geminiClient";
@@ -20,6 +21,7 @@ import type {
   CanonicalMemory,
   ConfidenceSummary,
   ShoppingComparisonOutput,
+  WardrobeCoverageProfile,
 } from "../types";
 import { formatMemoryForContext } from "./memory";
 import { formatCanonicalMemoryForPrompt, getClarifyingQuestion } from "./memoryArbiter";
@@ -29,6 +31,142 @@ import {
   shouldShowGapMessage,
   type EngagementResult,
 } from "./engagementEngine";
+import type { StylistDecision } from "./stylistDecision";
+
+// ============================================
+// V4: ANTI-HEDGING CONSTANTS
+// ============================================
+
+const MAX_EXPLANATION_LINES = 2;
+
+/**
+ * Hedging phrases to strip from responses
+ */
+const HEDGING_PHRASES = [
+  "you could",
+  "you might",
+  "might work",
+  "could work",
+  "both are good",
+  "both work",
+  "either would",
+  "it depends",
+  "depends on your preference",
+  "up to you",
+  "personal preference",
+  "whatever you prefer",
+  "you may want to",
+  "you may consider",
+  "consider trying",
+  "you can try",
+  "perhaps",
+  "maybe",
+  "possibly",
+];
+
+/**
+ * Decisive replacements for hedging phrases
+ */
+const DECISIVE_REPLACEMENTS: Record<string, string> = {
+  "you could": "go with",
+  "you might": "try",
+  "might work": "works",
+  "could work": "works",
+  "both are good": "this one hits harder",
+  "both work": "this is the better choice",
+  "either would": "go with",
+  "it depends": "here's the move",
+  "depends on your preference": "here's what I'd pick",
+  "up to you": "here's the call",
+  "personal preference": "here's my take",
+  "whatever you prefer": "here's the winner",
+  "you may want to": "go ahead and",
+  "you may consider": "try",
+  "consider trying": "rock",
+  "you can try": "rock",
+  "perhaps": "",
+  "maybe": "",
+  "possibly": "",
+};
+
+/**
+ * Remove hedging language from a message
+ */
+function removeHedging(message: string): string {
+  let result = message;
+  
+  for (const [hedge, replacement] of Object.entries(DECISIVE_REPLACEMENTS)) {
+    const regex = new RegExp(hedge, "gi");
+    result = result.replace(regex, replacement);
+  }
+  
+  // Clean up double spaces
+  result = result.replace(/\s{2,}/g, " ").trim();
+  
+  return result;
+}
+
+/**
+ * Limit explanation length
+ */
+function limitExplanation(text: string, maxLines: number = MAX_EXPLANATION_LINES): string {
+  const lines = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  if (lines.length <= maxLines) return text;
+  
+  return lines.slice(0, maxLines).join(". ").trim() + ".";
+}
+
+/**
+ * Build decision context for the prompt
+ */
+function buildDecisionContext(decision: StylistDecision): string {
+  if (!decision) return "";
+  
+  const lines: string[] = [];
+  lines.push("STYLIST DECISION (YOU MUST FOLLOW THIS):");
+  
+  if (decision.decisionType === "choose_one" && decision.chosenOption) {
+    lines.push(`- CHOSEN: "${decision.chosenOption}"`);
+    if (decision.rejectedOption) {
+      lines.push(`- REJECTED: "${decision.rejectedOption}"`);
+    }
+    lines.push(`- RATIONALE: ${decision.rationale}`);
+    lines.push("- YOUR RESPONSE MUST recommend the CHOSEN option only.");
+    lines.push("- Briefly explain why the rejected option wasn't picked.");
+  } else if (decision.decisionType === "outfit_set") {
+    lines.push("- Generate complete, opinionated outfit sets.");
+    lines.push("- Each outfit should be a full look (top, bottom, footwear + optional extras).");
+    lines.push("- Be decisive about each outfit - don't offer alternatives within an outfit.");
+  } else if (decision.decisionType === "no_outfit") {
+    lines.push("- This is an ADVISORY response - do NOT generate outfits.");
+    lines.push("- Provide helpful, informative content only.");
+  }
+  
+  if (decision.forceDecisive) {
+    lines.push("- BE EXTRA DECISIVE - confidence is low but you still made the call.");
+  }
+  
+  return lines.join("\n");
+}
+
+/**
+ * Build wardrobe gap context (one honest line)
+ */
+function buildWardrobeGapContext(coverage?: WardrobeCoverageProfile): string {
+  if (!coverage) return "";
+  
+  const missingSlots = coverage.missingMandatorySlots || [];
+  
+  if (missingSlots.length === 0) return "";
+  
+  // Only mention if significant gaps
+  if (missingSlots.length >= 2) {
+    const formatted = missingSlots.slice(0, 2).map(s => s.replace("_", " ")).join(" and ");
+    return `WARDROBE NOTE: User is missing ${formatted} - acknowledge this briefly but still provide best options.`;
+  }
+  
+  return "";
+}
 
 const FALLBACK_OUTPUT: FinalStylistOutput = {
   message: "I'd love to help you with your style! Let me know what you're looking for.",
@@ -216,6 +354,7 @@ function shuffleArray<T>(array: T[]): T[] {
 /**
  * Compose final response from all inputs
  * OPTIMIZED: Now includes Gen-Z tone rewriting directly (saves 1 LLM call)
+ * V4: Enforces stylist decision - no hedging allowed
  */
 export async function composeFinalResponse(
   intent: IntentType,
@@ -230,7 +369,9 @@ export async function composeFinalResponse(
     bodyType?: BodyTypeAnalysis;
     fashionIntelligence?: FashionIntelligence;
   },
-  memory?: ConversationMemory
+  memory?: ConversationMemory,
+  stylistDecision?: StylistDecision,
+  wardrobeCoverage?: WardrobeCoverageProfile
 ): Promise<FinalStylistOutput> {
   // Build quick rules from all analyses (merged reasoning - saves 1 LLM call)
   const quickRulesStr = buildQuickRulesFromAnalyses(
@@ -309,7 +450,13 @@ export async function composeFinalResponse(
     }
   };
 
-  // OPTIMIZED PROMPT: Includes rules reasoning + Gen-Z tone directly
+  // V4: Build decision enforcement string
+  const decisionContext = stylistDecision ? buildDecisionContext(stylistDecision) : "";
+  
+  // V4: Wardrobe gap context (one honest line)
+  const wardrobeGapContext = buildWardrobeGapContext(wardrobeCoverage);
+
+  // OPTIMIZED PROMPT: Includes rules reasoning + Gen-Z tone + decision enforcement
   const prompt = `You are MyMirro, a world-class AI personal stylist for Gen-Z and young professionals in India.
 
 USER MESSAGE:
@@ -327,6 +474,9 @@ ${quickRulesStr}
 ${memoryContext ? `CONVERSATION CONTEXT:\n${memoryContext}` : ""}
 
 WARDROBE SIZE: ${wardrobeContext.wardrobe_items.length} items
+${wardrobeGapContext}
+
+${decisionContext}
 
 USER'S COMMUNICATION STYLE: ${userTone}
 TONE INSTRUCTION: ${toneInstruction}
@@ -338,19 +488,29 @@ Requirements:
 1. Write in Gen-Z friendly tone as per the tone instruction above
 2. Keep it SHORT - 2-3 sentences max for the message
 ${getIntentInstructions()}
-5. Add 2 practical extra tips (keep them brief)
+5. Add 2 practical extra tips (keep them brief - MAX 2 lines each)
 6. Sound like their fashion bestie, not a bot
+
+CRITICAL - YOU ARE A DECISIVE STYLIST:
+- You are NOT an advisor presenting options. You are a stylist making THE call.
+- If the decision is already made, FOLLOW IT. Do not present alternatives.
+- Do NOT hedge. Do NOT say "both work" or "depends on preference".
+- Use decisive language: "Go with this", "This is the one", "Rock this".
+- Explain briefly WHY the choice works (1-2 sentences max).
 
 TONE MUST BE:
 - ${toneInstruction}
 - Add 1-3 emojis naturally (don't overdo it)
 - NO "I recommend" or "I suggest" - just tell them what slaps
+- CONFIDENT and DECISIVE - you know what works
 
 DO NOT:
 - ${shouldGenerateOutfits ? "Invent new outfit suggestions (use what's in module output)" : "Generate outfit suggestions - this is NOT an outfit request"}
 - Make the message too long or formal
 - Sound robotic or generic
 - Use corporate/marketing language
+- HEDGE or say "you could", "might work", "both are good"
+- Over-explain with body type theory or rule enumeration
 
 IMPORTANT: Return ONLY valid JSON matching the structure below, no other text.
 
@@ -362,6 +522,24 @@ ${getResponseStructure()}`;
     timeout: 12000,
     maxTokens: 2048,
   });
+
+  // V4: Post-process to remove any remaining hedging language
+  if (response.message) {
+    response.message = removeHedging(response.message);
+  }
+  
+  // V4: Limit explanation length in outfit descriptions
+  if (response.outfits) {
+    response.outfits = response.outfits.map(outfit => ({
+      ...outfit,
+      why_it_works: outfit.why_it_works ? limitExplanation(outfit.why_it_works) : outfit.why_it_works,
+    }));
+  }
+  
+  // V4: Limit extra tips length
+  if (response.extra_tips) {
+    response.extra_tips = response.extra_tips.map(tip => limitExplanation(tip, 2));
+  }
 
   // Generate suggestion pills based on response
   const hasOutfits = response.outfits && response.outfits.length > 0;
@@ -387,10 +565,13 @@ ${getResponseStructure()}`;
     // Add next step as a new line
     response.message = `${response.message}\n\n${engagement.nextStepSuggestion}`;
     
-    // Add wardrobe gap message if appropriate
-    if (engagement.wardrobeGapMessage && shouldShowGapMessage(conversationTurn, wardrobeContext.wardrobe_items.length)) {
+    // V4: Add wardrobe gap message only if relevant and not spammy
+    // This is now handled in prompt context, so only add engagement gap message for upload CTA
+    if (engagement.wardrobeGapMessage && 
+        wardrobeCoverage?.totalItems === 0 && 
+        shouldShowGapMessage(conversationTurn, wardrobeContext.wardrobe_items.length)) {
       response.extra_tips = response.extra_tips || [];
-      response.extra_tips.push(engagement.wardrobeGapMessage);
+      response.extra_tips.unshift(engagement.wardrobeGapMessage); // Put at start for visibility
     }
   }
 

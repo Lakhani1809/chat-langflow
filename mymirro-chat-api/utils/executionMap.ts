@@ -1,6 +1,7 @@
 /**
  * Intent-Based Execution Map
  * V2: Includes response mode, output contract, and candidate generation
+ * V3: Adds stylistMode for decisive vs advisory behavior
  */
 
 import type { 
@@ -15,6 +16,45 @@ import {
   inferResponseMode, 
   getOutputContract,
 } from "./wardrobeRequestDetector";
+
+// ============================================
+// STYLIST MODE
+// ============================================
+
+export type StylistMode = "stylist" | "advisor";
+
+/**
+ * Intents that require decisive stylist behavior (opinionated, directional)
+ */
+const STYLIST_MODE_INTENTS: IntentType[] = [
+  "outfit_generation",
+  "event_styling",
+  "shopping_help",
+  "item_recommendation",
+  "category_recommendation",
+  "travel_packing",
+];
+
+/**
+ * Intents that are advisory/informative (neutral, informational)
+ */
+const ADVISOR_MODE_INTENTS: IntentType[] = [
+  "color_analysis",
+  "body_type_advice",
+  "trend_analysis",
+  "wardrobe_query",
+  "general_chat",
+];
+
+/**
+ * Get stylist mode for an intent
+ */
+export function getStylistMode(intent: IntentType): StylistMode {
+  if (STYLIST_MODE_INTENTS.includes(intent)) {
+    return "stylist";
+  }
+  return "advisor";
+}
 
 /**
  * Execution configuration for each intent
@@ -373,17 +413,21 @@ export const EXECUTION_MAP_V2: Record<IntentType, Omit<ExecutionConfigV2, "respo
 
 /**
  * V2: Get full execution config with response mode
+ * V3: Includes stylistMode for decisive behavior
  */
 export function getExecutionConfigV2(
   message: string,
   intentResult: MultiIntentResult
-): ExecutionConfigV2 {
+): ExecutionConfigV2 & { stylistMode: StylistMode } {
   const baseConfig = EXECUTION_MAP_V2[intentResult.primary_intent] || EXECUTION_MAP_V2.general_chat;
   
   // Determine response mode based on message and intent
   const isWardrobeRequest = detectWardrobeRequest(message);
   const responseMode = inferResponseMode(message, intentResult.primary_intent);
   const outputContract = getOutputContract(responseMode, isWardrobeRequest);
+  
+  // V3: Determine stylist mode
+  const stylistMode = getStylistMode(intentResult.primary_intent);
   
   // Adjust requiresWardrobe based on response mode
   // Explicit wardrobe request always requires wardrobe
@@ -396,6 +440,7 @@ export function getExecutionConfigV2(
     responseMode,
     outputContract,
     requiresWardrobe,
+    stylistMode,
     // Only generate candidates if outputContract allows outfits
     generateCandidates: baseConfig.generateCandidates && outputContract !== "no_outfits",
   };
@@ -403,13 +448,15 @@ export function getExecutionConfigV2(
 
 /**
  * V2: Log execution plan with response mode
+ * V3: Includes stylist mode
  */
 export function logExecutionPlanV2(
-  config: ExecutionConfigV2,
+  config: ExecutionConfigV2 & { stylistMode?: StylistMode },
   intent: IntentType,
   hasCachedAnalysis: boolean
 ): void {
   console.log(`📋 V2 Execution Plan for "${intent}":`);
+  console.log(`   - Stylist Mode: ${config.stylistMode || "advisor"}`);
   console.log(`   - Response Mode: ${config.responseMode}`);
   console.log(`   - Output Contract: ${config.outputContract}`);
   console.log(`   - FIE: ${config.runFIE ? (hasCachedAnalysis && config.canUseCache ? "CACHED" : "RUN") : "SKIP"}`);

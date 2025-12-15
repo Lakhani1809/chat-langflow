@@ -2,11 +2,15 @@
  * Smart Clarification Detector
  * 
  * Determines if we need to ask the user for more context.
- * Rules:
+ * 
+ * V4 RULES (reduced aggressiveness):
  * 1. Only ask ONE clarifying question per session
  * 2. If user has provided context in message or history, don't ask
  * 3. If we've already asked, proceed with comprehensive response
  * 4. Provide suggestion pills to make answering easy
+ * 5. ONLY ask when TRULY required (occasion OR climate missing for heavy intents)
+ * 6. NEVER ask taste/preference questions (fit, color, aesthetic)
+ * 7. Low confidence alone is NOT a trigger for clarification
  */
 
 import type { 
@@ -208,43 +212,48 @@ function hasFIEContext(fie?: FashionIntelligence): boolean {
 
 /**
  * Generate clarification question with pills
+ * 
+ * V4: ONLY ask essential context questions:
+ * - Occasion (for outfit/event styling)
+ * - Climate (for travel packing)
+ * 
+ * NEVER ask about:
+ * - Fit preference ("fitted or relaxed?")
+ * - Color preference ("what colors do you like?")
+ * - Aesthetic preference ("minimalist or bold?")
+ * - Style uncertainty
  */
 function generateClarificationQuestion(
   intent: IntentType,
   signals: ContextSignals
 ): { question: string; pills: string[] } {
-  // Different questions based on intent
+  // V4: ONLY ask if BOTH occasion AND vibe are completely missing
+  // If user has ANY context, proceed without asking
   if (intent === "outfit_generation" || intent === "event_styling") {
-    if (!signals.hasOccasion && !signals.hasVibe) {
+    // V4: Only ask if user message is very generic like "what should I wear"
+    // AND has no context signals at all
+    if (!signals.hasOccasion && !signals.hasVibe && !signals.hasTimeContext && !signals.hasFormality) {
       return {
-        question: "What's the vibe you're going for? 🤔 Casual hangout, work, date night, or something else?",
-        pills: ["Casual day out", "Work/Office", "Date night", "Party vibes", "Just everyday"],
+        question: "What's the occasion? 📍",
+        pills: ["Casual hangout", "Work/Office", "Date night", "Party", "Just everyday"],
       };
     }
-    if (!signals.hasOccasion) {
-      return {
-        question: "Got it! What's the occasion? 📍",
-        pills: ["Casual hangout", "Work meeting", "Dinner date", "Weekend chill", "Special event"],
-      };
-    }
-    if (!signals.hasVibe) {
-      return {
-        question: "Nice! What vibe are you feeling? ✨",
-        pills: ["Comfy & casual", "Polished & put-together", "Trendy & bold", "Minimal & clean", "Dressy & fancy"],
-      };
-    }
+    // V4: Don't ask separate vibe question - that's a taste question
+    // If they've given occasion, we can infer vibe
   }
 
   if (intent === "travel_packing") {
-    if (!signals.hasWeatherContext) {
+    // Only ask about climate if truly missing
+    if (!signals.hasWeatherContext && !signals.hasTimeContext) {
       return {
-        question: "Where are you headed? What's the weather like there? 🌍",
-        pills: ["Beach vacation", "Cold destination", "City trip", "Mix of both", "Not sure yet"],
+        question: "What's the weather like where you're going? 🌍",
+        pills: ["Hot/Beach", "Cold/Winter", "Mild/Spring", "Mix of weather"],
       };
     }
   }
 
   // Default - no clarification needed
+  // V4: When in doubt, don't ask - just proceed with best guess
   return { question: "", pills: [] };
 }
 
