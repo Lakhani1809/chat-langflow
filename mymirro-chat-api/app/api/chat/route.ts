@@ -38,7 +38,8 @@ import type {
 } from "../../../types";
 
 // Utils
-import { classifyIntent, getIntentFromKeywords } from "../../../utils/intentClassifier";
+// V5: Only use LLM-based classifyIntent (no keyword shortcuts)
+import { classifyIntent } from "../../../utils/intentClassifier";
 import { fetchWardrobeAndProfile } from "../../../utils/supabaseClient";
 import { buildConversationMemory } from "../../../utils/memory";
 import { formatWardrobeForLLM } from "../../../utils/wardrobeFormatter";
@@ -149,94 +150,92 @@ export async function POST(request: NextRequest) {
     console.log(`📦 Session: ${sessionKey} (cached: ${hasCachedAnalysis ? "YES" : "NO"})`);
 
     // ========================================
-    // STEP 1: PARALLEL - Intent + Memory + Wardrobe
-    // (Run non-dependent work in parallel for speed)
+    // STEP 1: Build Memory + Classify Intent (LLM always)
+    // V5: Always use LLM for accurate intent classification
     // ========================================
-    const parallelStart = startStage("parallel_init");
+    const intentStart = startStage("intent_classification");
     
-    // Quick keyword-based intent (instant, no API call)
-    const quickIntent = getIntentFromKeywords(message);
-    
-    // V2: Check for explicit wardrobe request
-    const explicitWardrobeRequest = detectWardrobeRequest(message);
-    
-    // Run memory + wardrobe fetch in parallel with LLM intent (if needed)
+    // Build conversation memory from history
     const memory = buildConversationMemory(history);
     
-    // V2: Multi-intent classification now returns MultiIntentResult
-    const intentPromise = quickIntent 
-      ? Promise.resolve(quickIntent)
-      : classifyIntent(message, memory);
-    
-    const wardrobePromise = fetchWardrobeAndProfile(userId);
-    
-    // Wait for both in parallel
-    const [intentResult, wardrobeResult] = await Promise.allSettled([
-      intentPromise,
-      wardrobePromise,
-    ]);
-    
-    recordStage(logEntry, "parallelInit", parallelStart, true);
-
-    // ========================================
-    // STEP 2: Extract Intent (V2: Multi-intent + Confidence)
-    // ========================================
+    // V5: Always use LLM for intent - no keyword shortcuts
+    // This ensures accurate understanding of user's true intent
     let intent: IntentType;
     let secondaryIntents: IntentType[] = [];
     let intentConfidence = createConfidenceScore(0.7, ["inferred"]);
     
-    if (intentResult.status === "fulfilled") {
-      const result = intentResult.value;
-      // Handle both quick intent (IntentType) and LLM result (MultiIntentResult)
-      if (typeof result === "string") {
-        // Quick intent returns just IntentType
-        intent = result as IntentType;
-        intentConfidence = createConfidenceScore(0.8, ["keyword_match"]);
-      } else if (result && typeof result === "object" && "primary_intent" in result) {
-        // LLM classification returns MultiIntentResult
-        const multiResult = result as unknown as MultiIntentResult;
+    try {
+      const intentResult = await classifyIntent(message, memory);
+      
+      if (intentResult && typeof intentResult === "object" && "primary_intent" in intentResult) {
+        // MultiIntentResult from LLM
+        const multiResult = intentResult as unknown as MultiIntentResult;
         intent = multiResult.primary_intent;
         secondaryIntents = multiResult.secondary_intents || [];
-        intentConfidence = multiResult.intent_confidence;
-        console.log(`${quickIntent ? "⚡" : "🤖"} Intent: ${intent} (confidence: ${intentConfidence.score.toFixed(2)})`);
+        intentConfidence = multiResult.intent_confidence || createConfidenceScore(0.85, ["llm_classified"]);
+        
+        console.log(`🤖 Intent: ${intent} (confidence: ${intentConfidence.score.toFixed(2)})`);
         if (secondaryIntents.length > 0) {
           console.log(`   Secondary: ${secondaryIntents.join(", ")}`);
         }
-      } else if (result && typeof result === "object" && "intent" in result) {
+      } else if (intentResult && typeof intentResult === "object" && "intent" in intentResult) {
         // Legacy IntentResult
-        intent = (result as { intent: IntentType }).intent;
+        intent = (intentResult as { intent: IntentType }).intent;
+        intentConfidence = createConfidenceScore(0.8, ["llm_classified"]);
+        console.log(`🤖 Intent: ${intent}`);
       } else {
         intent = "general_chat";
+        intentConfidence = createConfidenceScore(0.5, ["fallback"]);
+        console.log(`⚠️ Intent fallback: general_chat`);
       }
-    } else {
+    } catch (error) {
       intent = "general_chat";
       intentConfidence = createConfidenceScore(0.3, ["default_fallback"], "Intent classification failed");
-      recordError(logEntry, `Intent classification failed: ${intentResult.reason}`);
-      console.log(`⚠️ Intent fallback: general_chat`);
-    }
-    
-    if (!quickIntent) {
-      console.log(`🤖 Intent: ${intent}`);
-    } else {
-      console.log(`⚡ Intent: ${intent} (keyword match)`);
+      recordError(logEntry, `Intent classification failed: ${error}`);
+      console.log(`⚠️ Intent fallback: general_chat (error: ${error})`);
     }
     
     setIntent(logEntry, intent);
+    recordStage(logEntry, "intentClassification", intentStart, true);
 
     // ========================================
-    // STEP 3: Extract Wardrobe Context
+    // STEP 2: Check if Wardrobe is Needed (V5: Conditional fetch)
+    // ========================================
+    const execConfig = getExecutionConfig(intent);
+    
+    // V2: Check for explicit wardrobe request in message
+    const explicitWardrobeRequest = detectWardrobeRequest(message);
+    
+    // Determine if we need wardrobe
+    const needsWardrobe = execConfig.requiresWardrobe || explicitWardrobeRequest;
+    
+    console.log(`📋 Execution config: requiresWardrobe=${execConfig.requiresWardrobe}, explicit=${explicitWardrobeRequest}`);
+
+    // ========================================
+    // STEP 3: Fetch Wardrobe (only if needed)
+    // V5: Sequential fetch based on intent
     // ========================================
     let wardrobeContext: WardrobeContext;
     let userProfile;
     
-    if (wardrobeResult.status === "fulfilled") {
-      wardrobeContext = wardrobeResult.value;
-      userProfile = wardrobeResult.value.profile;
-      console.log(`👔 Wardrobe: ${wardrobeContext.wardrobe_items.length} items`);
+    if (needsWardrobe) {
+      const wardrobeStart = startStage("wardrobe_fetch");
+      try {
+        const wardrobeResult = await fetchWardrobeAndProfile(userId);
+        wardrobeContext = wardrobeResult;
+        userProfile = wardrobeResult.profile;
+        console.log(`👔 Wardrobe: ${wardrobeContext.wardrobe_items.length} items (fetched)`);
+        recordStage(logEntry, "wardrobeFetch", wardrobeStart, true);
+      } catch (error) {
+        wardrobeContext = { userId, wardrobe_items: [] };
+        recordError(logEntry, `Wardrobe fetch failed: ${error}`);
+        recordStage(logEntry, "wardrobeFetch", wardrobeStart, false);
+        console.log(`⚠️ Wardrobe fallback: empty`);
+      }
     } else {
+      // V5: Skip wardrobe fetch for intents that don't need it
       wardrobeContext = { userId, wardrobe_items: [] };
-      recordError(logEntry, `Wardrobe fetch failed: ${wardrobeResult.reason}`);
-      console.log(`⚠️ Wardrobe fallback: empty`);
+      console.log(`⏭️ Wardrobe: skipped (not needed for ${intent})`);
     }
 
     // ========================================
@@ -251,10 +250,7 @@ export async function POST(request: NextRequest) {
       console.log(`   Missing mandatory: ${missingMandatorySlots.join(", ")}`);
     }
 
-    // ========================================
-    // STEP 4: Get Execution Config (CRITICAL OPTIMIZATION)
-    // ========================================
-    const execConfig = getExecutionConfig(intent);
+    // Log execution plan (execConfig already defined in STEP 2)
     logExecutionPlan(intent, hasCachedAnalysis);
     
     // V2: Determine response mode based on intent

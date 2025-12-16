@@ -1,9 +1,10 @@
 /**
  * Intent Classification Module
  * V2: Multi-intent support with confidence scoring
+ * V5: Always use LLM for accurate intent classification (no keyword shortcuts)
  */
 
-import { callGeminiJson } from "./geminiClient";
+import { callGeminiJson, GEMINI_LITE } from "./geminiClient";
 import type { 
   IntentType, 
   IntentResult, 
@@ -27,43 +28,146 @@ const FALLBACK_MULTI_INTENT: MultiIntentResult = {
 
 /**
  * Classify user intent
+ * V5: Enhanced prompt for accurate intent classification
  */
 export async function classifyIntent(
   userMessage: string,
   memory?: ConversationMemory
-): Promise<IntentResult> {
-  // Check for continuation query first
+): Promise<MultiIntentResult> {
+  // Check for continuation query first (pattern-based, no LLM needed)
   if (memory && isContinuationQuery(userMessage, memory)) {
-    return { intent: "continuation_query" };
+    return {
+      primary_intent: "continuation_query",
+      secondary_intents: [],
+      intent_confidence: createConfidenceScore(0.95, ["memory_pattern"]),
+    };
   }
 
-  const prompt = `You are an intent classifier for MyMirro, a fashion stylist AI.
+  // Build context from memory
+  const recentContext = memory?.recentUserMessages?.slice(-2).join(" ") || "";
+  const hasOutfitContext = recentContext.toLowerCase().includes("outfit") || 
+                           recentContext.toLowerCase().includes("wear");
+
+  const prompt = `You are an expert intent classifier for MyMirro, a personal fashion stylist AI app.
+
+Your task is to understand the TRUE intent behind the user's message, not just match keywords.
 
 USER MESSAGE:
 "${userMessage}"
 
-Classify this message into EXACTLY ONE of the following intents:
+${recentContext ? `RECENT CONVERSATION CONTEXT:\n"${recentContext}"\n` : ""}
 
-1. outfit_generation - User wants complete outfit suggestions (e.g., "what should I wear", "outfit for date", "help me dress")
-2. item_recommendation - User wants specific item suggestions (e.g., "what top goes with", "suggest a jacket")
-3. category_recommendation - User asks about a category (e.g., "show me my tops", "what jeans do I have")
-4. shopping_help - User wants shopping/brand advice (e.g., "where to buy", "brand suggestions", "what to shop for")
-5. trend_analysis - User asks about trends (e.g., "what's trending", "is X in style", "current fashion")
-6. travel_packing - User needs packing help (e.g., "pack for trip", "travel outfits", "what to bring")
-7. color_analysis - User asks about colors (e.g., "what colors suit me", "color combinations")
-8. body_type_advice - User asks about body type styling (e.g., "dress for my body", "flatter my figure")
-9. event_styling - User has specific event (e.g., "wedding guest", "interview outfit", "party look")
-10. wardrobe_query - User asks about their wardrobe (e.g., "what do I have", "do I own", "my wardrobe")
-11. continuation_query - User wants more options (e.g., "more", "another option", "different one")
-12. general_chat - General conversation, greetings, or unclear intent
+AVAILABLE INTENTS (choose the BEST match):
 
-IMPORTANT: Return ONLY valid JSON with exactly this format:
-{"intent": "<one_of_the_above_labels>"}`;
+1. **outfit_generation** - User wants COMPLETE outfit suggestions from their wardrobe
+   Examples: "what should I wear today?", "make me an outfit", "style me for today"
+   NOT: asking about trends, shopping advice, or specific items
 
-  return callGeminiJson<IntentResult>(prompt, FALLBACK_INTENT, {
-    temperature: 0.3,
-    timeout: 6000,
-  });
+2. **event_styling** - User wants outfit for a SPECIFIC EVENT or occasion
+   Examples: "outfit for my date tonight", "what to wear to a wedding", "interview look"
+   Key: Must mention a specific event/occasion
+
+3. **shopping_help** - User wants EXTERNAL shopping advice, recommendations to BUY, or comparing items to purchase
+   Examples: "should I buy the hoodie or jacket?", "where can I get a blazer?", "which brand is better?"
+   Key: About BUYING or COMPARING items, not styling existing wardrobe
+
+4. **trend_analysis** - User asks about FASHION TRENDS or what's currently in style
+   Examples: "what's trending now?", "is oversized still in?", "current fashion trends"
+   Key: About general fashion trends, NOT personal styling
+
+5. **travel_packing** - User needs help PACKING for a trip
+   Examples: "pack for my Goa trip", "what to bring to Europe", "travel capsule wardrobe"
+   Key: Must involve travel/trip context
+
+6. **color_analysis** - User asks about COLORS that suit them
+   Examples: "what colors look good on me?", "my color palette", "warm or cool tones?"
+   Key: About color theory and personal coloring
+
+7. **body_type_advice** - User asks about styling for their BODY TYPE
+   Examples: "dress for my body shape", "flatter my figure", "I'm pear-shaped, what works?"
+   Key: About body shape/figure styling
+
+8. **wardrobe_query** - User asks about items they ALREADY OWN
+   Examples: "do I have a black dress?", "show me my jackets", "what's in my wardrobe?"
+   Key: Querying existing wardrobe, not asking for styling
+
+9. **item_recommendation** - User wants a SPECIFIC ITEM suggestion
+   Examples: "what top goes with these jeans?", "suggest a bag", "need a belt"
+   Key: About ONE specific item, not complete outfit
+
+10. **category_recommendation** - User asks about a CATEGORY of items
+    Examples: "show me formal shirts", "what kind of shoes should I have?"
+    Key: About a category, not specific item or complete outfit
+
+11. **continuation_query** - User wants MORE OPTIONS or variations
+    Examples: "show me more", "another option", "different style", "what else?"
+    Key: Following up on previous suggestions
+
+12. **general_chat** - Greetings, unclear intent, or off-topic
+    Examples: "hi", "thanks", "how are you?", unrelated questions
+    Key: Not about fashion/styling specifically
+
+DECISION RULES:
+- If user asks "what's trending" → trend_analysis (NOT outfit_generation)
+- If user compares items to buy → shopping_help (NOT outfit_generation)
+- If user mentions a specific event → event_styling (NOT outfit_generation)
+- If message is vague like "what should I wear" → outfit_generation
+- When in doubt between outfit_generation and event_styling, prefer event_styling if ANY event is mentioned
+- When in doubt between shopping_help and item_recommendation, shopping_help if they're buying
+
+Return JSON:
+{
+  "primary_intent": "<intent>",
+  "secondary_intents": [],
+  "confidence": <0.0-1.0>,
+  "rationale": "<brief reason>"
+}`;
+
+  type LLMResponse = {
+    primary_intent: string;
+    secondary_intents?: string[];
+    confidence?: number;
+    rationale?: string;
+  };
+
+  const result = await callGeminiJson<LLMResponse>(
+    prompt,
+    { primary_intent: "general_chat", secondary_intents: [], confidence: 0.5 },
+    { 
+      model: GEMINI_LITE, // Use lite model for fast classification
+      temperature: 0.2, // Lower temp for more consistent classification
+      timeout: 5000,
+    }
+  );
+
+  // Validate and transform result
+  const validIntents: IntentType[] = [
+    "outfit_generation", "item_recommendation", "category_recommendation",
+    "shopping_help", "trend_analysis", "travel_packing", "color_analysis",
+    "body_type_advice", "event_styling", "wardrobe_query", "continuation_query",
+    "general_chat",
+  ];
+
+  const primaryIntent = validIntents.includes(result.primary_intent as IntentType)
+    ? result.primary_intent as IntentType
+    : "general_chat";
+
+  const secondaryIntents = (result.secondary_intents || [])
+    .filter((i): i is IntentType => validIntents.includes(i as IntentType))
+    .slice(0, 2);
+
+  console.log(`🎯 Intent rationale: ${result.rationale || "none"}`);
+
+  return {
+    primary_intent: primaryIntent,
+    secondary_intents: secondaryIntents,
+    intent_confidence: createConfidenceScore(
+      result.confidence || 0.7,
+      ["llm_classified"],
+      result.rationale
+    ),
+    rationale: result.rationale,
+  };
 }
 
 /**
@@ -219,102 +323,20 @@ export function getIntentDescription(intent: IntentType): string {
 }
 
 // ============================================
-// V2: MULTI-INTENT CLASSIFICATION
+// V2: MULTI-INTENT CLASSIFICATION (DEPRECATED)
+// V5: Use classifyIntent() instead - it now returns MultiIntentResult
 // ============================================
 
 /**
  * V2: Classify intent with multi-label support and confidence scoring
+ * @deprecated Use classifyIntent() instead - it now returns MultiIntentResult
  */
 export async function classifyIntentV2(
   userMessage: string,
   memory?: ConversationMemory
 ): Promise<MultiIntentResult> {
-  // Check for continuation query first
-  if (memory && isContinuationQuery(userMessage, memory)) {
-    return {
-      primary_intent: "continuation_query",
-      secondary_intents: [],
-      intent_confidence: createConfidenceScore(0.95, ["memory_pattern"]),
-    };
-  }
-
-  // Try keyword classification first
-  const keywordResult = getMultiIntentFromKeywords(userMessage);
-  if (keywordResult) {
-    return keywordResult;
-  }
-
-  // Fall back to LLM classification
-  const prompt = `You are an intent classifier for MyMirro, a fashion stylist AI.
-
-USER MESSAGE:
-"${userMessage}"
-
-Classify this message. A message may have multiple intents.
-
-INTENTS:
-1. outfit_generation - User wants complete outfit suggestions
-2. item_recommendation - User wants specific item suggestions
-3. category_recommendation - User asks about a category
-4. shopping_help - User wants shopping/brand advice or is comparing items to buy
-5. trend_analysis - User asks about trends
-6. travel_packing - User needs packing help
-7. color_analysis - User asks about colors
-8. body_type_advice - User asks about body type styling
-9. event_styling - User has specific event
-10. wardrobe_query - User asks about their wardrobe
-11. continuation_query - User wants more options
-12. general_chat - General conversation
-
-Return JSON with:
-- primary_intent: The main intent
-- secondary_intents: Array of additional relevant intents (can be empty)
-- confidence: 0-1 score of how confident you are
-- rationale: Brief explanation
-
-Example:
-{"primary_intent": "shopping_help", "secondary_intents": ["color_analysis"], "confidence": 0.85, "rationale": "User comparing items to buy with color preference"}
-
-IMPORTANT: Return ONLY valid JSON.`;
-
-  type LLMResponse = {
-    primary_intent: string;
-    secondary_intents?: string[];
-    confidence?: number;
-    rationale?: string;
-  };
-
-  const result = await callGeminiJson<LLMResponse>(
-    prompt,
-    { primary_intent: "general_chat", secondary_intents: [], confidence: 0.5 },
-    { temperature: 0.3, timeout: 6000 }
-  );
-
-  // Validate and transform result
-  const validIntents: IntentType[] = [
-    "outfit_generation", "item_recommendation", "category_recommendation",
-    "shopping_help", "trend_analysis", "travel_packing", "color_analysis",
-    "body_type_advice", "event_styling", "wardrobe_query", "continuation_query",
-    "general_chat",
-  ];
-
-  const primaryIntent = validIntents.includes(result.primary_intent as IntentType)
-    ? result.primary_intent as IntentType
-    : "general_chat";
-
-  const secondaryIntents = (result.secondary_intents || [])
-    .filter((i): i is IntentType => validIntents.includes(i as IntentType))
-    .slice(0, 2); // Max 2 secondary intents
-
-  return {
-    primary_intent: primaryIntent,
-    secondary_intents: secondaryIntents,
-    intent_confidence: createConfidenceScore(
-      result.confidence || 0.5,
-      ["llm_classification"]
-    ),
-    rationale: result.rationale,
-  };
+  // V5: Just call the main classifyIntent which now returns MultiIntentResult
+  return classifyIntent(userMessage, memory);
 }
 
 /**
