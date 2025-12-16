@@ -3,6 +3,7 @@
  * V2: Shopping comparison framework + decisiveness + confidence-aware behavior
  * V3: Engagement engine integration - keeps conversations alive
  * V4: Stylist Decision Layer - Forces decisive, non-hedging responses
+ * V6: Canonical decision examples + compressed inputs for maximum authority
  */
 
 import { callGeminiJson, GEMINI_FLASH } from "./geminiClient";
@@ -34,10 +35,57 @@ import {
 import type { StylistDecision } from "./stylistDecision";
 
 // ============================================
+// V6: CANONICAL DECISION EXAMPLES (HIGHEST ROI)
+// These examples teach the LLM decisive stylist behavior
+// DO NOT modify or add more than 5 examples
+// ============================================
+
+const CANONICAL_DECISION_EXAMPLES = `
+Examples of decisive stylist behavior:
+
+User: "Should I wear a hoodie or a jacket?"
+A: "Jacket. It sharpens your silhouette and elevates the look. Skip the hoodie for this occasion."
+
+User: "Is this outfit okay or should I change?"
+A: "Change it. The fit is too relaxed for the setting and flattens your proportions."
+
+User: "Can I wear sneakers to this dinner?"
+A: "No. Go with clean loafers or boots — sneakers will underdress the look."
+
+User: "Which color works better - blue or black?"
+A: "Black. It's sharper for this vibe and easier to style. Blue reads more casual here."
+
+User: "I'm not sure about this look"
+A: "Trust it. The proportions are right and the colors work. You're overthinking — go with it."
+
+Follow this decision style exactly.
+`;
+
+// ============================================
+// V6: NON-OVERRIDABLE DECISION INSTRUCTION
+// The LLM must explain decisions, not re-evaluate them
+// ============================================
+
+const DECISION_AUTHORITY_INSTRUCTION = `
+IMPORTANT:
+A stylist decision has already been made upstream.
+You must NOT reconsider it.
+You must NOT present alternatives.
+You must NOT hedge.
+Your role is to confidently explain and justify the chosen direction.
+`;
+
+const FORCE_DECISIVE_INSTRUCTION = `
+Even if confidence is low, you must remain decisive and directional.
+Do not express uncertainty. Commit to the decision fully.
+`;
+
+// ============================================
 // V4: ANTI-HEDGING CONSTANTS
 // ============================================
 
 const MAX_EXPLANATION_LINES = 2;
+const MAX_REASON_LINES = 2;
 
 /**
  * Hedging phrases to strip from responses
@@ -117,36 +165,80 @@ function limitExplanation(text: string, maxLines: number = MAX_EXPLANATION_LINES
 }
 
 /**
- * Build decision context for the prompt
+ * V6: Build NON-OVERRIDABLE decision context
+ * The LLM must explain the decision, not re-evaluate it
  */
 function buildDecisionContext(decision: StylistDecision): string {
   if (!decision) return "";
   
   const lines: string[] = [];
-  lines.push("STYLIST DECISION (YOU MUST FOLLOW THIS):");
+  
+  // V6: Add authority instruction first
+  lines.push(DECISION_AUTHORITY_INSTRUCTION);
   
   if (decision.decisionType === "choose_one" && decision.chosenOption) {
-    lines.push(`- CHOSEN: "${decision.chosenOption}"`);
+    lines.push(`FINAL DECISION: "${decision.chosenOption}"`);
+    lines.push(`REASON: ${decision.rationale}`);
     if (decision.rejectedOption) {
-      lines.push(`- REJECTED: "${decision.rejectedOption}"`);
+      lines.push(`SKIPPED: "${decision.rejectedOption}" (mention briefly as justification, NEVER as alternative)`);
     }
-    lines.push(`- RATIONALE: ${decision.rationale}`);
-    lines.push("- YOUR RESPONSE MUST recommend the CHOSEN option only.");
-    lines.push("- Briefly explain why the rejected option wasn't picked.");
+    lines.push("OUTPUT RULE: Reference ONLY the chosen option. The rejected option is NOT an alternative.");
   } else if (decision.decisionType === "outfit_set") {
-    lines.push("- Generate complete, opinionated outfit sets.");
-    lines.push("- Each outfit should be a full look (top, bottom, footwear + optional extras).");
-    lines.push("- Be decisive about each outfit - don't offer alternatives within an outfit.");
+    lines.push("DECISION: Generate complete, opinionated outfit sets.");
+    lines.push("RULE: Each outfit is a full look. No alternatives within outfits.");
   } else if (decision.decisionType === "no_outfit") {
-    lines.push("- This is an ADVISORY response - do NOT generate outfits.");
-    lines.push("- Provide helpful, informative content only.");
+    lines.push("DECISION: Advisory response only - NO outfits.");
   }
   
+  // V6: Add force decisive instruction if needed
   if (decision.forceDecisive) {
-    lines.push("- BE EXTRA DECISIVE - confidence is low but you still made the call.");
+    lines.push(FORCE_DECISIVE_INSTRUCTION);
   }
   
   return lines.join("\n");
+}
+
+/**
+ * V6: Compress analysis into 1-line constraints only
+ * No paragraphs, no theory, no multi-line reasoning
+ */
+function compressAnalysis(analyses: {
+  color?: ColorAnalysis;
+  silhouette?: SilhouetteAnalysis;
+  bodyType?: BodyTypeAnalysis;
+  fashionIntelligence?: FashionIntelligence;
+}): string {
+  const constraints: string[] = [];
+  
+  // Extract only final conclusions - no theory
+  if (analyses.color?.color_direction) {
+    constraints.push(`Color: ${analyses.color.color_direction}`);
+  }
+  if (analyses.silhouette?.silhouette_verdict) {
+    constraints.push(`Silhouette: ${analyses.silhouette.silhouette_verdict}`);
+  }
+  if (analyses.bodyType?.body_type) {
+    constraints.push(`Body: ${analyses.bodyType.body_type}`);
+  }
+  if (analyses.fashionIntelligence?.vibe) {
+    constraints.push(`Vibe: ${analyses.fashionIntelligence.vibe}`);
+  }
+  if (analyses.fashionIntelligence?.occasion) {
+    constraints.push(`Occasion: ${analyses.fashionIntelligence.occasion}`);
+  }
+  
+  if (constraints.length === 0) return "";
+  
+  return `CONSTRAINTS: ${constraints.join(" | ")}`;
+}
+
+/**
+ * V6: Compress wardrobe to counts only
+ */
+function compressWardrobe(wardrobeContext: WardrobeContext): string {
+  const count = wardrobeContext.wardrobe_items.length;
+  if (count === 0) return "WARDROBE: Empty";
+  return `WARDROBE: ${count} items available`;
 }
 
 /**
@@ -450,69 +542,42 @@ export async function composeFinalResponse(
     }
   };
 
-  // V4: Build decision enforcement string
+  // V6: Build decision enforcement string (NON-OVERRIDABLE)
   const decisionContext = stylistDecision ? buildDecisionContext(stylistDecision) : "";
   
-  // V4: Wardrobe gap context (one honest line)
+  // V6: Compress analysis to 1-line constraints only
+  const compressedConstraints = compressAnalysis(analyses);
+  
+  // V6: Compress wardrobe to counts only
+  const wardrobeSummary = compressWardrobe(wardrobeContext);
+  
+  // V6: Wardrobe gap context (one honest line)
   const wardrobeGapContext = buildWardrobeGapContext(wardrobeCoverage);
 
-  // OPTIMIZED PROMPT: Includes rules reasoning + Gen-Z tone + decision enforcement
-  const prompt = `You are MyMirro, a world-class AI personal stylist for Gen-Z and young professionals in India.
+  // V6 OPTIMIZED PROMPT: Canonical examples + compressed inputs + decision authority
+  const prompt = `You are MyMirro, a decisive AI personal stylist.
 
-USER MESSAGE:
-"${userMessage}"
+${CANONICAL_DECISION_EXAMPLES}
 
+${decisionContext}
+
+USER: "${userMessage}"
 INTENT: ${intent}
-MODULE USED: ${moduleName}
+${compressedConstraints}
+${wardrobeSummary}
+${wardrobeGapContext}
+TONE: ${toneInstruction}
 
 MODULE OUTPUT:
 ${moduleOutputStr}
 
-STYLING GUIDANCE (use these to inform your response):
-${quickRulesStr}
+TASK: Respond decisively. 2-3 sentences max.
 
-${memoryContext ? `CONVERSATION CONTEXT:\n${memoryContext}` : ""}
-
-WARDROBE SIZE: ${wardrobeContext.wardrobe_items.length} items
-${wardrobeGapContext}
-
-${decisionContext}
-
-USER'S COMMUNICATION STYLE: ${userTone}
-TONE INSTRUCTION: ${toneInstruction}
-
-TASK:
-Create the final response for the user. You're their stylish bestie helping them slay.
-
-Requirements:
-1. Write in Gen-Z friendly tone as per the tone instruction above
-2. Keep it SHORT - 2-3 sentences max for the message
-${getIntentInstructions()}
-5. Add 2 practical extra tips (keep them brief - MAX 2 lines each)
-6. Sound like their fashion bestie, not a bot
-
-CRITICAL - YOU ARE A DECISIVE STYLIST:
-- You are NOT an advisor presenting options. You are a stylist making THE call.
-- If the decision is already made, FOLLOW IT. Do not present alternatives.
-- Do NOT hedge. Do NOT say "both work" or "depends on preference".
-- Use decisive language: "Go with this", "This is the one", "Rock this".
-- Explain briefly WHY the choice works (1-2 sentences max).
-
-TONE MUST BE:
-- ${toneInstruction}
-- Add 1-3 emojis naturally (don't overdo it)
-- NO "I recommend" or "I suggest" - just tell them what slaps
-- CONFIDENT and DECISIVE - you know what works
-
-DO NOT:
-- ${shouldGenerateOutfits ? "Invent new outfit suggestions (use what's in module output)" : "Generate outfit suggestions - this is NOT an outfit request"}
-- Make the message too long or formal
-- Sound robotic or generic
-- Use corporate/marketing language
-- HEDGE or say "you could", "might work", "both are good"
-- Over-explain with body type theory or rule enumeration
-
-IMPORTANT: Return ONLY valid JSON matching the structure below, no other text.
+RULES:
+1. ${getIntentInstructions()}
+2. Be SHORT and CONFIDENT
+3. No hedging, no alternatives
+4. Add 1-2 brief tips
 
 ${getResponseStructure()}`;
 
@@ -841,71 +906,54 @@ export function formatFinalOutput(
 
 /**
  * V2: Compose shopping comparison response
- * DECISIVE - Must give a verdict, not neutral
+ * V6: DECISIVE - Uses canonical examples + non-overridable decision
  */
 export async function composeShoppingComparisonV2(
   userMessage: string,
   canonicalMemory: CanonicalMemory,
   confidenceSummary: ConfidenceSummary,
   wardrobeContext?: WardrobeContext,
-  explicitWardrobeRequest?: boolean
+  explicitWardrobeRequest?: boolean,
+  stylistDecision?: StylistDecision
 ): Promise<FinalStylistOutput> {
-  const memoryFormatted = formatCanonicalMemoryForPrompt(canonicalMemory);
-  const behavior = getConfidenceBehavior(confidenceSummary.final.score);
   const userTone = canonicalMemory.rawMemory?.userTone || "casual_friendly";
   const toneInstruction = getToneInstruction(userTone);
 
-  // Determine confidence preamble
-  let confidencePreamble = "";
-  if (behavior === "hedge_recommendation") {
-    confidencePreamble = getHedgingPhrase();
-  } else if (behavior === "decisive_recommendation") {
-    confidencePreamble = getDecisivePhrase();
-  }
+  // V6: Compress memory to key preferences only
+  const compressedPrefs = [
+    canonicalMemory.vibes?.slice(0, 2).join(", "),
+    canonicalMemory.formality_preference?.value,
+    canonicalMemory.fit_preference?.value,
+  ].filter(Boolean).join(" | ");
 
-  // Optional wardrobe styling hint
-  const wardrobeHint = explicitWardrobeRequest && wardrobeContext && wardrobeContext.wardrobe_items.length > 0
-    ? `\n\nWARDROBE CONTEXT (for styling hints only - NO full outfits):
-${wardrobeContext.wardrobe_items.slice(0, 10).map(i => `- ${i.name || i.color + " " + i.category}`).join("\n")}`
-    : "";
+  // V6: Compress wardrobe to count only
+  const wardrobeCount = wardrobeContext?.wardrobe_items.length || 0;
 
-  const prompt = `You are MyMirro, a decisive fashion advisor for Gen-Z professionals in India.
+  // V6: Build non-overridable decision context
+  const decisionContext = stylistDecision ? buildDecisionContext(stylistDecision) : "";
 
-USER MESSAGE:
-"${userMessage}"
+  // V6 OPTIMIZED PROMPT: Canonical examples + decision authority
+  const prompt = `You are MyMirro, a decisive stylist.
 
-USER'S STYLE PROFILE:
-${memoryFormatted}
+${CANONICAL_DECISION_EXAMPLES}
 
-${wardrobeHint}
+${decisionContext}
 
-TASK: SHOPPING COMPARISON
-The user is asking for a shopping decision. You MUST:
-1. Give a CLEAR VERDICT - recommend ONE option (not both, not "depends")
-2. Provide 3 specific reasons tied to their style/preferences
-3. Say when the OTHER option makes more sense (short clause)
-4. If wardrobe relevant, give a SHORT text hint about styling (NO outfit arrays)
+USER: "${userMessage}"
+PREFS: ${compressedPrefs || "versatile style"}
+WARDROBE: ${wardrobeCount} items
+TONE: ${toneInstruction}
 
-BE DECISIVE. DO NOT BE NEUTRAL.
-- If confidence is ${behavior === "hedge_recommendation" ? "moderate" : "high"}, ${behavior === "hedge_recommendation" ? "acknowledge uncertainty but still commit" : "be very specific and confident"}
-- ${confidencePreamble ? `Start with: "${confidencePreamble}"` : "Be direct and confident"}
+TASK: SHOPPING VERDICT
+Pick ONE option. No "both work". No "depends".
 
-RESPONSE FORMAT:
 {
-  "verdict": "Buy [specific item]",
-  "reasons": [
-    "reason 1 tied to their style/climate/occasion",
-    "reason 2 tied to their wardrobe gaps or preferences",
-    "reason 3 about versatility or value"
-  ],
-  "alternative_when": "Get [the other option] when [specific scenario]",
-  "wardrobe_styling_hint": "Short 1-sentence text about how to style with what they have (optional, only if wardrobe provided)"
+  "verdict": "Buy [item] - [1 sentence why]",
+  "reasons": ["reason 1", "reason 2"],
+  "alternative_when": "Get the other when [specific scenario]"
 }
 
-USER'S TONE: ${userTone}
-TONE: ${toneInstruction}. Be conversational and genuine.
-
-Now generate the DECISIVE shopping comparison response. Return JSON only.`;
+Return JSON only.`;
 
   type ShoppingResponse = {
     verdict: string;
@@ -973,7 +1021,7 @@ function formatShoppingComparisonMessage(
 
 /**
  * V2: Compose response with confidence awareness
- * Asks clarifying question if confidence is low
+ * V6: Uses canonical examples + compressed inputs + non-overridable decisions
  */
 export async function composeFinalResponseV2(
   intent: IntentType,
@@ -990,21 +1038,13 @@ export async function composeFinalResponseV2(
     silhouette?: SilhouetteAnalysis;
     bodyType?: BodyTypeAnalysis;
     fashionIntelligence?: FashionIntelligence;
-  }
+  },
+  stylistDecision?: StylistDecision
 ): Promise<FinalStylistOutput> {
   const behavior = getConfidenceBehavior(confidenceSummary.final.score);
   
-  // If confidence is low and we need clarification, ask first
-  if (behavior === "ask_clarification" && canonicalMemory.needs_clarification) {
-    const clarifyingQ = getClarifyingQuestion(canonicalMemory);
-    if (clarifyingQ) {
-      return {
-        message: clarifyingQ,
-        outfits: undefined,
-        suggestion_pills: generateSuggestionPills(intent, false, false, false, false),
-      };
-    }
-  }
+  // V6: Don't ask clarification - proceed decisively
+  // (Clarification is now handled upstream in route.ts)
 
   // Handle shopping comparison mode separately
   if (responseMode === "shopping_comparison") {
@@ -1013,92 +1053,48 @@ export async function composeFinalResponseV2(
       canonicalMemory,
       confidenceSummary,
       wardrobeContext,
-      false // Not explicit wardrobe request
+      false,
+      stylistDecision
     );
   }
 
-  // Build quick rules from analyses
-  const quickRulesStr = buildQuickRulesFromAnalyses(
-    rules,
-    analyses.color,
-    analyses.silhouette,
-    analyses.bodyType,
-    analyses.fashionIntelligence
-  );
+  // V6: Compress analysis to 1-line constraints only
+  const compressedConstraints = compressAnalysis(analyses);
+  
+  // V6: Compress wardrobe to count only
+  const wardrobeSummary = compressWardrobe(wardrobeContext);
 
-  const memoryFormatted = formatCanonicalMemoryForPrompt(canonicalMemory);
   const userTone = canonicalMemory.rawMemory?.userTone || "casual_friendly";
   const toneInstruction = getToneInstruction(userTone);
 
-  // Confidence-aware preamble
-  let confidenceInstruction = "";
-  if (behavior === "hedge_recommendation") {
-    confidenceInstruction = `\nCONFIDENCE: Medium. Use hedging language like "${getHedgingPhrase()}" but still provide specific recommendations.`;
-  } else if (behavior === "decisive_recommendation") {
-    confidenceInstruction = `\nCONFIDENCE: High. Be very specific and decisive. Use language like "${getDecisivePhrase()}"`;
-  }
-
-  // Response mode instruction
-  let responseModeInstruction = "";
-  if (responseMode === "advisory_text") {
-    responseModeInstruction = "\nRESPONSE MODE: Text advice only. Do NOT include outfits array.";
-  } else if (responseMode === "visual_outfit") {
-    responseModeInstruction = "\nRESPONSE MODE: Include outfit suggestions from module output.";
-  }
+  // V6: Build non-overridable decision context
+  const decisionContext = stylistDecision ? buildDecisionContext(stylistDecision) : "";
 
   const moduleOutputStr = JSON.stringify(moduleOutput, null, 2);
 
-  const prompt = `You are MyMirro, a world-class AI personal stylist for Gen-Z and young professionals in India.
+  // V6 OPTIMIZED PROMPT: Canonical examples + compressed inputs
+  const prompt = `You are MyMirro, a decisive stylist.
 
-USER MESSAGE:
-"${userMessage}"
+${CANONICAL_DECISION_EXAMPLES}
 
+${decisionContext}
+
+USER: "${userMessage}"
 INTENT: ${intent}
-MODULE USED: ${moduleName}
+${compressedConstraints}
+${wardrobeSummary}
+TONE: ${toneInstruction}
 
 MODULE OUTPUT:
 ${moduleOutputStr}
 
-USER'S STYLE PROFILE:
-${memoryFormatted}
+TASK: Respond decisively. 2-3 sentences max.
+${responseMode === "advisory_text" ? "NO outfits." : "Include outfits from module output."}
 
-STYLING GUIDANCE:
-${quickRulesStr}
-${confidenceInstruction}
-${responseModeInstruction}
-
-WARDROBE SIZE: ${wardrobeContext.wardrobe_items.length} items
-
-USER'S TONE: ${userTone}
-TONE: ${toneInstruction}
-
-TASK:
-Create the final response. Be their stylish bestie.
-
-DECISIVENESS RULES:
-- If comparing options: PICK ONE. Don't say "both are good"
-- If recommending: Be specific, not vague
-- If uncertain: Acknowledge but still commit to a recommendation
-- Add personality - be memorable, not generic
-
-Requirements:
-1. Write in Gen-Z friendly tone as specified
-2. Keep message SHORT - 2-3 sentences max
-3. ${responseMode === "visual_outfit" ? "Include outfits from module output" : "NO outfits array"}
-4. Add 2 practical, brief extra tips
-5. Sound like their fashion bestie, not a bot
-
-DO NOT:
-- Be neutral or wishy-washy
-- Say "it depends" without committing
-- Sound robotic or generic
-- Use corporate language
-
-Return JSON:
 {
-  "message": "Short Gen-Z friendly message (2-3 sentences)...",
-  ${responseMode === "visual_outfit" ? '"outfits": [{"title": "...", "items": [...], "why_it_works": "..."}],' : ""}
-  "extra_tips": ["brief tip 1", "brief tip 2"]
+  "message": "Short confident message...",
+  ${responseMode === "visual_outfit" ? '"outfits": [{"title": "...", "items": [...], "why_it_works": "1 sentence"}],' : ""}
+  "extra_tips": ["tip 1", "tip 2"]
 }`;
 
   const response = await callGeminiJson<FinalStylistOutput>(prompt, FALLBACK_OUTPUT, {
