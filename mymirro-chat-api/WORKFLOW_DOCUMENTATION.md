@@ -5,12 +5,13 @@
 2. [Architecture](#architecture)
 3. [Request Flow](#request-flow)
 4. [Detailed Step-by-Step Workflow](#detailed-step-by-step-workflow)
-5. [V2 Features](#v2-features)
+5. [V5/V6 Features](#v5v6-features)
 6. [Key Components](#key-components)
 7. [Data Flow](#data-flow)
 8. [Optimization Strategies](#optimization-strategies)
 9. [Response Modes](#response-modes)
 10. [Error Handling](#error-handling)
+11. [Migration Guide](#migration-guide)
 
 ---
 
@@ -32,7 +33,7 @@ The MyMirro Chat API is an AI-powered fashion stylist backend that provides pers
 
 ## Architecture
 
-### High-Level Architecture
+### High-Level Architecture (V6)
 
 ```
 ┌─────────────┐
@@ -41,60 +42,81 @@ The MyMirro Chat API is an AI-powered fashion stylist backend that provides pers
 └──────┬──────┘
        │ POST /api/chat
        ▼
-┌─────────────────────────────────────────────────────────┐
-│              API Route Handler                           │
-│            (app/api/chat/route.ts)                      │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 1: Parallel Init                           │  │
-│  │  - Intent Classification                         │  │
-│  │  - Memory Building                               │  │
-│  │  - Wardrobe Fetch                                │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 2: Execution Map                           │  │
-│  │  - Determine which modules to run                │  │
-│  │  - Check cache availability                     │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 3: Analysis Pipeline                      │  │
-│  │  - Fashion Intelligence Engine (FIE)             │  │
-│  │  - Color Analysis                                │  │
-│  │  - Silhouette Analysis                           │  │
-│  │  - Body Type Analysis                            │  │
-│  │  - Rules Engine                                  │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 4: V2 Features                              │  │
-│  │  - Canonical Memory Arbitration                  │  │
-│  │  - Confidence Scoring                            │  │
-│  │  - Wardrobe Coverage Profile                     │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 5: Specialized Module Routing              │  │
-│  │  - Outfit Generation                             │  │
-│  │  - Shopping Help                                 │  │
-│  │  - Travel Packing                                │  │
-│  │  - Trend Analysis                                │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 6: Final Composition                       │  │
-│  │  - Merge rules + tone rewriting                  │  │
-│  │  - Gen-Z friendly response                       │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │  STEP 7: Post-Processing                        │  │
-│  │  - Safety Filtering                              │  │
-│  │  - Image Resolution                              │  │
-│  │  - Response Formatting                           │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│              API Route Handler V6                            │
+│            (app/api/chat/route.ts)                           │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 1: LLM Intent Classification (Always)            │ │
+│  │  - NO keyword shortcuts (V5 change)                    │ │
+│  │  - Multi-intent with primary/secondary                 │ │
+│  │  - Confidence scoring                                  │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 2: Conditional Wardrobe Fetch (V5)               │ │
+│  │  - Check requiresWardrobe from execution config        │ │
+│  │  - Skip fetch for advisory intents                     │ │
+│  │  - Explicit wardrobe request detection                 │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 3: Smart Clarification (V4)                      │ │
+│  │  - ONE question only, NEVER repeat                     │ │
+│  │  - Only for required context (occasion/climate)        │ │
+│  │  - Suggestion pills for quick answers                  │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 4: Analysis Pipeline (Cached)                    │ │
+│  │  - Fashion Intelligence Engine (FIE)                   │ │
+│  │  - Color/Silhouette/Body Analysis (parallel)           │ │
+│  │  - Rules Engine                                        │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 5: Canonical Memory + Confidence                 │ │
+│  │  - Memory arbitration (resolve conflicts)              │ │
+│  │  - Combined confidence scoring                         │ │
+│  │  - Wardrobe coverage profile                           │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 6: Stylist Decision Layer (V6) ← NEW             │ │
+│  │  - MUST pick one option (no hedging)                   │ │
+│  │  - Deterministic decision rules                        │ │
+│  │  - stylistMode: "stylist" | "advisor"                  │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 7: Specialized Module Routing                    │ │
+│  │  - Outfit / Shopping / Travel / Trends                 │ │
+│  │  - Intent-aware response mode enforcement              │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 8: Final Composition (V6)                        │ │
+│  │  - Canonical decision examples injected                │ │
+│  │  - Compressed inputs (1-line constraints)              │ │
+│  │  - Hedging removal + explanation limits                │ │
+│  │  - Engagement engine integration                       │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  STEP 9: Post-Processing                               │ │
+│  │  - Safety filter                                       │ │
+│  │  - Image resolution                                    │ │
+│  │  - Response formatting                                 │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────┐
@@ -170,24 +192,22 @@ The API returns a `ChatResponse`:
 
 ---
 
-### STEP 1: Parallel Initialization
+### STEP 1: LLM Intent Classification (V5: Always LLM)
 
-**Location**: `app/api/chat/route.ts` (lines 140-168)
+**Location**: `app/api/chat/route.ts` (lines 152-199)
 
-**Purpose**: Run non-dependent tasks in parallel to minimize latency.
+**Purpose**: Accurately classify user intent using LLM (no keyword shortcuts).
 
-#### 1.1 Quick Intent Classification
-- **Function**: `getIntentFromKeywords()` from `utils/intentClassifier.ts`
-- **Purpose**: Fast keyword-based intent detection (no LLM call)
-- **Returns**: `IntentType | null`
-- **Examples**: 
-  - "outfit" → `outfit_generation`
-  - "buy" or "shop" → `shopping_help`
-  - "pack" or "travel" → `travel_packing`
+**V5 Change**: Removed keyword-based intent detection. LLM is ALWAYS used for accurate understanding.
 
-#### 1.2 Memory Building
+#### Why LLM-Only?
+- **Problem**: Keyword matching caused false positives (e.g., "trending" in "what's trending?" incorrectly triggered outfit generation)
+- **Solution**: LLM understands context and nuance
+- **Trade-off**: Slightly higher latency (~200-300ms) but much better accuracy
+
+#### 1.1 Memory Building (Synchronous)
 - **Function**: `buildConversationMemory()` from `utils/memory.ts`
-- **Purpose**: Extract conversation context from history
+- **Purpose**: Extract conversation context before intent classification
 - **Extracts**:
   - Recent user/assistant messages
   - User tone (casual, professional, etc.)
@@ -195,23 +215,62 @@ The API returns a `ChatResponse`:
   - Frequent aesthetics
   - Last outfit suggestions
 
-#### 1.3 Wardrobe Fetch
-- **Function**: `fetchWardrobeAndProfile()` from `utils/supabaseClient.ts`
-- **Purpose**: Fetch user's wardrobe items and profile from Supabase
-- **Returns**: `WardrobeContext` with:
-  - `wardrobe_items`: Array of `WardrobeItem`
-  - `body_type`, `gender`, `style_keywords` from profile
-
-#### 1.4 LLM Intent Classification (if needed)
-- **Function**: `classifyIntent()` or `classifyIntentV2()` from `utils/intentClassifier.ts`
-- **Purpose**: Use LLM if keyword matching fails
+#### 1.2 LLM Intent Classification
+- **Function**: `classifyIntent()` from `utils/intentClassifier.ts`
 - **Model**: `gemini-2.5-flash-lite`
-- **V2**: Returns `MultiIntentResult` with:
+- **Returns**: `MultiIntentResult` with:
   - `primary_intent`: Main intent
-  - `secondary_intents`: Additional relevant intents
-  - `intent_confidence`: Confidence score
+  - `secondary_intents`: Additional relevant intents (e.g., shopping + outfit)
+  - `intent_confidence`: Confidence score (0-1)
+  - `rationale`: Why this intent was chosen
 
-**Parallel Execution**: All three tasks run simultaneously using `Promise.allSettled()`.
+**Example Classifications**:
+```
+"what should I wear today?" → outfit_generation (0.95)
+"hoodie or jacket for a date?" → shopping_help + event_styling (0.88)
+"what's trending in streetwear?" → trend_analysis (0.92)
+```
+
+---
+
+### STEP 2: Conditional Wardrobe Fetch (V5)
+
+**Location**: `app/api/chat/route.ts` (lines 201-239)
+
+**Purpose**: Only fetch wardrobe when the intent actually needs it.
+
+**V5 Change**: Wardrobe fetch is now CONDITIONAL based on `requiresWardrobe` from execution config.
+
+#### Why Conditional?
+- **Problem**: Fetching wardrobe for every request is wasteful for advisory intents
+- **Solution**: Check intent first, then decide if wardrobe is needed
+- **Savings**: ~100-300ms for intents like `trend_analysis`, `general_chat`
+
+#### Decision Logic
+```typescript
+const execConfig = getExecutionConfig(intent);
+const explicitWardrobeRequest = detectWardrobeRequest(message);
+const needsWardrobe = execConfig.requiresWardrobe || explicitWardrobeRequest;
+```
+
+#### Intents That NEED Wardrobe
+- `outfit_generation` ✅
+- `event_styling` ✅
+- `travel_packing` ✅
+- `wardrobe_query` ✅
+- `item_recommendation` ✅
+
+#### Intents That SKIP Wardrobe
+- `trend_analysis` ⏭️
+- `shopping_help` ⏭️ (unless comparing with owned items)
+- `color_analysis` ⏭️
+- `body_type_advice` ⏭️
+- `general_chat` ⏭️
+
+#### Explicit Wardrobe Request Detection
+- **Function**: `detectWardrobeRequest()` from `utils/wardrobeRequestDetector.ts`
+- **Purpose**: Detect if user explicitly mentions "my wardrobe", "what I have", etc.
+- **Override**: If detected, fetch wardrobe even for advisory intents
 
 ---
 
@@ -824,116 +883,281 @@ The API returns a `ChatResponse`:
 
 ---
 
-## V2 Features
+## V5/V6 Features
 
-### 1. Canonical Memory
+### 1. LLM-Only Intent Classification (V5)
 
-**Purpose**: Single source of truth for user preferences.
+**Purpose**: Accurate intent understanding without keyword false positives.
 
-**Key Functions**:
-- `arbitrateMemory()`: Resolves conflicts
-- `extractFitPreference()`: Extracts fit preferences
-- `extractVibes()`: Extracts style vibes
-- `resolveFitConflicts()`: Resolves conflicting preferences
+**Key Changes**:
+- Removed `getIntentFromKeywords()` shortcut
+- Always use LLM for intent classification
+- Better handling of ambiguous queries
 
 **Benefits**:
-- Consistent recommendations across conversation
-- Conflict detection and clarification
-- Confidence scoring for memory reliability
+- "What's trending?" → `trend_analysis` (not `outfit_generation`)
+- "Hoodie or jacket?" → `shopping_help` (comparison detected)
+- Multi-intent support with confidence scores
 
-### 2. Confidence Scoring
+---
 
-**Purpose**: Quantify system certainty at each stage.
+### 2. Conditional Wardrobe Fetching (V5)
 
-**Key Functions**:
-- `createConfidenceScore()`: Create confidence object
-- `calculateIntentConfidence()`: Intent classification confidence
-- `calculateWardrobeConfidence()`: Wardrobe coverage confidence
-- `combineConfidences()`: Weighted combination
+**Purpose**: Only fetch wardrobe data when needed.
 
-**Confidence Levels**:
-- **Low (< 0.5)**: Ask clarifying questions
-- **Medium (0.5-0.7)**: Use hedging phrases
-- **High (> 0.7)**: Be decisive
+**Key Changes**:
+- Intent classification happens FIRST
+- Check `requiresWardrobe` from execution config
+- Skip fetch for advisory intents
 
-### 3. Response Modes
+**Performance**:
+- Saves ~100-300ms for advisory intents
+- Reduces database load
+- More efficient resource usage
 
-**Purpose**: Control output type based on intent.
+---
 
-**Modes**:
-- `visual_outfit`: Show complete outfits with images
+### 3. Stylist Decision Layer (V6) ← NEW
+
+**Purpose**: Force decisive, non-hedging responses.
+
+**Location**: `utils/stylistDecision.ts`
+
+**Philosophy**: The AI is a STYLIST making decisions, not an advisor presenting options.
+
+#### Decision Types
+```typescript
+type StylistDecisionType = "choose_one" | "outfit_set" | "no_outfit";
+```
+
+#### Decision Rules
+| Intent | Decision | Behavior |
+|--------|----------|----------|
+| `shopping_help` | `choose_one` | MUST pick one option |
+| `outfit_generation` | `outfit_set` | MUST return curated outfits |
+| `trend_analysis` | `no_outfit` | Advisory only |
+
+#### Key Functions
+- `makeStylistDecision()`: Main decision function
+- `extractComparisonOptions()`: Parse "X or Y" patterns
+- `pickBestOption()`: Deterministic option selection
+- `getDecisivePhrase()`: Get decisive language
+
+#### Example Transformation
+```
+Before (hedging):
+"Both the hoodie and jacket could work! The hoodie is more casual 
+while the jacket is more polished. It really depends on your vibe..."
+
+After (decisive):
+"Jacket. It sharpens your silhouette and elevates the look. 
+Skip the hoodie for this occasion."
+```
+
+---
+
+### 4. Smart Clarification System (V4)
+
+**Purpose**: Ask ONE clarifying question when context is truly missing.
+
+**Location**: `utils/clarificationDetector.ts`
+
+**V4 Rules (Reduced Aggressiveness)**:
+1. Only ask ONE question per session
+2. If user has provided context, don't ask
+3. If already asked, proceed with comprehensive response
+4. ONLY ask for required context (occasion, climate)
+5. NEVER ask taste/preference questions (fit, color, aesthetic)
+6. Low confidence alone is NOT a trigger
+
+#### When to Ask
+| Intent | Ask About | Example Question |
+|--------|-----------|------------------|
+| `outfit_generation` | Occasion (if missing) | "What's the occasion? 📍" |
+| `travel_packing` | Climate (if missing) | "What's the weather like?" |
+
+#### When NOT to Ask
+- Fit preference ("fitted or relaxed?") ❌
+- Color preference ("what colors?") ❌
+- Aesthetic preference ("minimalist or bold?") ❌
+- User already mentioned any context ❌
+
+---
+
+### 5. Engagement Engine (V4)
+
+**Purpose**: Keep conversations alive, promote features, drive wardrobe completeness.
+
+**Location**: `utils/engagementEngine.ts`
+
+#### Capabilities
+
+**1. Wardrobe Gap Detection**
+```typescript
+detectWardrobeGaps() → {
+  missingCategories: ["footwear", "basic tops"],
+  suggestedItems: ["your go-to sneakers"],
+  gapMessage: "I can build stronger outfits once you add some footwear..."
+}
+```
+
+**V4 Rule**: ONE honest line about gaps, not promotional fluff.
+
+**2. Feature Promotion**
+```typescript
+getFeaturePromotion(intent, conversationTurn) → {
+  feature: "style_check",
+  message: "📱 Want a quick style check before you head out?",
+  ctaText: "Try Style Check"
+}
+```
+
+**3. Next-Step Suggestions**
+```typescript
+generateNextStep() → "Want to see these with different shoes? 👟"
+```
+
+**4. Engagement Pills**
+```typescript
+generateEngagementPills() → [
+  "Show me more options",
+  "Make it more casual",
+  "Different colors",
+  "Add accessories"
+]
+```
+
+**5. Continuation Hooks**
+```typescript
+generateContinuationHook() → "btw, want to explore more vibes? 💅"
+```
+
+---
+
+### 6. Canonical Decision Examples (V6)
+
+**Purpose**: Teach LLM decisive behavior through examples.
+
+**Location**: `utils/finalComposer.ts`
+
+**Injected Examples**:
+```
+User: "Should I wear a hoodie or a jacket?"
+A: "Jacket. It sharpens your silhouette and elevates the look. 
+    Skip the hoodie for this occasion."
+
+User: "Is this outfit okay or should I change?"
+A: "Change it. The fit is too relaxed for the setting."
+
+User: "Can I wear sneakers to this dinner?"
+A: "No. Go with clean loafers or boots — sneakers will underdress."
+```
+
+These examples are ALWAYS included in the prompt (never dynamic).
+
+---
+
+### 7. Non-Overridable Decisions (V6)
+
+**Purpose**: Prevent LLM from re-evaluating upstream decisions.
+
+**Decision Authority Instruction**:
+```
+A stylist decision has already been made upstream.
+You must NOT reconsider it.
+You must NOT present alternatives.
+You must NOT hedge.
+Your role is to confidently explain and justify the chosen direction.
+```
+
+---
+
+### 8. Compressed Inputs (V6)
+
+**Purpose**: Reduce prompt noise, increase decision clarity.
+
+**Before**:
+```
+STYLING GUIDANCE:
+Color direction: neutral
+Primary palette: black, white, grey
+Good combos: black and white, navy and cream
+Silhouette verdict: balanced proportions...
+[500+ tokens]
+```
+
+**After**:
+```
+CONSTRAINTS: Color: neutral | Silhouette: balanced | Vibe: casual | Occasion: everyday
+WARDROBE: 15 items available
+[50 tokens]
+```
+
+---
+
+### 9. Hedging Removal (V6)
+
+**Purpose**: Strip wishy-washy language from final responses.
+
+**Hedging Phrases Removed**:
+- "You could try..."
+- "It might work..."
+- "Both options are..."
+- "Depending on your preference..."
+- "I would suggest..."
+
+**Replaced With**:
+- "Go with this."
+- "This works."
+- "This is the call."
+- "Here's the pick."
+
+---
+
+### 10. Explanation Limits (V6)
+
+**Purpose**: Prevent over-explanation with body-type theory.
+
+**Limits**:
+- `MAX_EXPLANATION_LINES = 3`
+- `MAX_REASON_LINES = 2`
+- No multi-paragraph rationales
+
+---
+
+### Legacy Features (V2/V3)
+
+#### Canonical Memory
+- Arbitrates user preferences from conversation
+- Resolves conflicts (e.g., "I like fitted" vs "prefer loose")
+- Single source of truth for styling decisions
+
+#### Confidence Scoring
+- Intent confidence (0-1)
+- Memory confidence
+- Wardrobe confidence
+- Combined for behavior adaptation
+
+#### Response Modes
+- `visual_outfit`: Complete outfits with images
 - `advisory_text`: Text-only styling advice
-- `shopping_comparison`: Shopping recommendations with comparisons
-- `mixed`: Combination of outfits and text
+- `shopping_comparison`: Item comparisons
 
-**Enforcement**:
-- Shopping queries default to `shopping_comparison` (no outfits unless explicitly requested)
-- Outfit generation defaults to `visual_outfit`
-- Trend/color analysis defaults to `advisory_text`
+#### Output Contract
+- `outfits_required`: Must return outfits
+- `outfits_optional`: May include outfits
+- `no_outfits`: Must NOT return outfits
 
-### 4. Output Contract
-
-**Purpose**: Define whether outfits are required, optional, or forbidden.
-
-**Contracts**:
-- `outfits_required`: Must return outfits (outfit generation, event styling)
-- `outfits_optional`: Outfits allowed but not required
-- `no_outfits`: Must NOT return outfits (shopping help, trend analysis)
-
-### 5. Deterministic Hard Rules
-
-**Purpose**: Code-owned, strict outfit validation.
-
-**Location**: `rules/hardRules.ts`
-
-**Rules**:
-- Mandatory slots (upper, lower, footwear)
+#### Hard Rules (Deterministic)
+- Mandatory slots validation
 - Formality coherence
 - Silhouette compatibility
-- Ethnic coherence
 - Climate sanity
-- No duplicate slots
 
-**Evaluation**: `evaluateOutfitHardRules()` returns blocking violations and warnings.
-
-### 6. LLM Soft Rules
-
-**Purpose**: Flexible, context-aware styling guidelines.
-
-**Location**: `rules/softRules.ts`
-
-**Rules**:
+#### Soft Rules (LLM)
 - Color harmony
 - Style consistency
 - Occasion appropriateness
-- Personal preference alignment
-
-**Evaluation**: `evaluateOutfitCandidates()` scores outfits based on soft rules.
-
-### 7. Wardrobe Coverage Profile
-
-**Purpose**: Assess wardrobe completeness and image availability.
-
-**Key Functions**:
-- `computeWardrobeCoverage()`: Calculate coverage per category
-- `canCreateCompleteOutfits()`: Check if mandatory slots are available
-- `getWardrobeConfidenceScore()`: Calculate confidence based on coverage
-
-**Output**: `WardrobeCoverageProfile` with:
-- Item counts per category
-- Image availability
-- Missing mandatory slots
-- Coverage level (none, low, medium, high)
-
-### 8. Multi-Intent Handling
-
-**Purpose**: Support queries with multiple intents.
-
-**Example**: "Should I buy a jacket or hoodie for my date outfit?"
-- Primary: `shopping_help`
-- Secondary: `outfit_generation`
-
-**Function**: `classifyIntentV2()` returns `MultiIntentResult` with primary and secondary intents.
 
 ---
 
@@ -1010,6 +1234,7 @@ The API returns a `ChatResponse`:
 - `composeFinalResponseV2()`: V2 composer with confidence
 - `composeShoppingComparisonV2()`: Shopping comparison mode
 - `generateSuggestionPills()`: Generate follow-up prompts
+- **Engagement integration**: Uses `generateEngagement` to add next steps, wardrobe gap nudges (when appropriate), feature promotions, and replaces pills with engagement pills. Gap messages respect frequency rules to avoid spam.
 
 **Model**: `gemini-2.0-flash`
 
@@ -1045,11 +1270,56 @@ The API returns a `ChatResponse`:
 - `mergeSoftRules()`: Normalize LLM soft rules
 - `evaluateOutfitCandidates()`: Combined evaluation
 
+### 11. Engagement Engine (`utils/engagementEngine.ts`)
+
+- **Purpose**: Drive user engagement, wardrobe completeness, and feature discovery.
+- **Functions**:
+  - `detectWardrobeGaps()`: Find missing essentials and suggest uploads.
+  - `getFeaturePromotion()`: Contextual feature CTA (Style Check, Shopping, Upload, Travel prep).
+  - `generateNextStep()`: Add compelling next-step lines to every reply.
+  - `generateEngagementPills()`: Engagement-focused pills (show more options, tweak vibe, upload items).
+  - `generateContinuationHook()`: Keep the conversation from dying out.
+
+### 12. Stylist Decision Layer (`utils/stylistDecision.ts`) ← V6
+
+- **Purpose**: Force decisive, non-hedging responses.
+- **Functions**:
+  - `makeStylistDecision()`: Main decision function - NEVER returns neutral.
+  - `extractComparisonOptions()`: Parse "X or Y" patterns from messages.
+  - `pickBestOption()`: Deterministic option selection based on preferences.
+  - `getDecisivePhrase()`: Generate confident language.
+  - `getRejectionPhrase()`: Phrase for rejected option.
+- **Decision Types**:
+  - `choose_one`: For shopping/comparison queries
+  - `outfit_set`: For outfit generation
+  - `no_outfit`: For advisory intents
+
+### 13. Smart Clarification Detector (`utils/clarificationDetector.ts`) ← V4
+
+- **Purpose**: Determine if clarification is truly needed.
+- **Functions**:
+  - `needsClarification()`: Main check - returns question and pills if needed.
+  - `detectContextSignals()`: Find occasion, vibe, formality signals in message.
+  - `hasContextInHistory()`: Check conversation history for context.
+  - `hasFIEContext()`: Check if Fashion Intelligence has enough context.
+  - `isAnsweringClarification()`: Detect if user is responding to our question.
+  - `getComprehensivePromptInstruction()`: Instruction for comprehensive responses.
+- **V4 Rules**:
+  - Only ONE question per session
+  - Only for required context (occasion, climate)
+  - NEVER taste/preference questions
+
+### 14. Wardrobe Request Detector (`utils/wardrobeRequestDetector.ts`) ← V5
+
+- **Purpose**: Detect explicit wardrobe mentions to override conditional fetch.
+- **Function**: `detectWardrobeRequest(message)`
+- **Patterns**: "my wardrobe", "what I have", "from my closet", etc.
+
 ---
 
 ## Data Flow
 
-### Request Flow
+### Request Flow (V6)
 
 ```
 Frontend Request
@@ -1058,17 +1328,43 @@ POST /api/chat
     ↓
 Parse & Validate
     ↓
-Parallel Init (Intent, Memory, Wardrobe)
+Build Conversation Memory
     ↓
-Execution Map
+LLM Intent Classification (ALWAYS)  ← V5
     ↓
-Analysis Pipeline (FIE, Color, Silhouette, Body, Rules)
+Check requiresWardrobe
     ↓
-V2: Canonical Memory + Confidence
+┌──────────────────────────────────┐
+│ Conditional Wardrobe Fetch (V5)  │
+│ - Skip for advisory intents      │
+│ - Fetch for outfit intents       │
+└──────────────────────────────────┘
     ↓
-Specialized Module (Outfit, Shopping, Travel, etc.)
+Smart Clarification Check (V4)
     ↓
-Final Composer (with merged rules + tone)
+[If needs clarification] → Return question + pills
+    ↓
+Analysis Pipeline (cached when possible)
+    ↓
+Canonical Memory + Confidence
+    ↓
+┌──────────────────────────────────┐
+│ Stylist Decision Layer (V6)      │  ← NEW
+│ - Extract comparison options     │
+│ - Make decisive call             │
+│ - Set stylistMode                │
+└──────────────────────────────────┘
+    ↓
+Specialized Module Routing
+    ↓
+┌──────────────────────────────────┐
+│ Final Composer (V6)              │
+│ - Inject canonical examples      │
+│ - Compress inputs                │
+│ - Remove hedging                 │
+│ - Limit explanations             │
+│ - Add engagement content         │
+└──────────────────────────────────┘
     ↓
 Safety Filter
     ↓
@@ -1412,9 +1708,401 @@ Server runs on `http://localhost:3000`
 
 ---
 
+---
+
+## Migration Guide
+
+This section provides guidance for migrating the MyMirro Chat API to AI orchestration frameworks like **Mastra**, **LangChain**, **Vercel AI SDK**, or similar agent-based architectures.
+
+### Current Architecture vs Agent Architecture
+
+| Current (Monolithic Route) | Agent Framework |
+|---------------------------|-----------------|
+| Single `route.ts` file | Multiple Agents/Tools |
+| Imperative orchestration | Declarative workflows |
+| Manual caching | Built-in memory systems |
+| Inline LLM calls | Tool abstractions |
+| Sequential steps | Graph-based execution |
+
+---
+
+### Component Mapping
+
+#### 1. Intent Classifier → **Router Agent**
+
+**Current**: `classifyIntent()` in `utils/intentClassifier.ts`
+
+**Agent Framework**:
+```typescript
+// Mastra/LangChain Router Pattern
+const intentRouter = createRouter({
+  routes: [
+    { name: "outfit", condition: (input) => isOutfitIntent(input) },
+    { name: "shopping", condition: (input) => isShoppingIntent(input) },
+    { name: "trends", condition: (input) => isTrendIntent(input) },
+    // ...
+  ],
+  defaultRoute: "general_chat",
+});
+```
+
+**Migration Notes**:
+- Intent classification becomes a routing decision
+- Can use LLM-based router or rule-based router
+- Multi-intent → parallel agent execution
+
+---
+
+#### 2. Analysis Pipeline → **Analysis Agent**
+
+**Current**: `runAnalysisPipeline()` in `analysis/index.ts`
+
+**Agent Framework**:
+```typescript
+const analysisAgent = createAgent({
+  name: "FashionAnalyzer",
+  tools: [
+    fashionIntelligenceTool,
+    colorAnalysisTool,
+    silhouetteAnalysisTool,
+    bodyTypeAnalysisTool,
+    rulesEngineTool,
+  ],
+  memory: sessionMemory, // Built-in caching
+});
+```
+
+**Sub-Tools**:
+| Current Function | Tool Name | Purpose |
+|-----------------|-----------|---------|
+| `extractFashionIntelligence()` | `fashion_intelligence` | Understand user style |
+| `analyzeColors()` | `color_analysis` | Color recommendations |
+| `analyzeSilhouette()` | `silhouette_analysis` | Proportion advice |
+| `analyzeBodyType()` | `body_type_analysis` | Body-specific styling |
+| `generateStylingRules()` | `rules_engine` | Styling rules |
+
+---
+
+#### 3. Specialized Modules → **Domain Agents**
+
+**Current**: `modules/outfit.ts`, `modules/shopping.ts`, etc.
+
+**Agent Framework**:
+```typescript
+// Outfit Agent
+const outfitAgent = createAgent({
+  name: "OutfitStylist",
+  description: "Creates complete outfit suggestions",
+  tools: [wardrobeTool, outfitGeneratorTool, rulesValidatorTool],
+  instructions: `
+    You are a decisive fashion stylist.
+    Never hedge. Always pick one option.
+    Explain briefly why it works.
+  `,
+});
+
+// Shopping Agent
+const shoppingAgent = createAgent({
+  name: "ShoppingAdvisor",
+  description: "Provides shopping recommendations",
+  tools: [brandDatabaseTool, priceComparisonTool],
+  instructions: `
+    When comparing items, ALWAYS recommend one.
+    Explain the trade-offs, then make the call.
+  `,
+});
+
+// Trend Agent
+const trendAgent = createAgent({
+  name: "TrendExpert",
+  description: "Analyzes fashion trends",
+  tools: [trendDatabaseTool, seasonalAnalysisTool],
+  instructions: `
+    Advisory mode - no outfits.
+    Focus on trend insights and how to style them.
+  `,
+});
+```
+
+---
+
+#### 4. Stylist Decision Layer → **Decision Agent**
+
+**Current**: `makeStylistDecision()` in `utils/stylistDecision.ts`
+
+**Agent Framework**:
+```typescript
+const decisionAgent = createAgent({
+  name: "StylistDecisionMaker",
+  description: "Makes final decisive calls",
+  tools: [
+    comparisonExtractorTool,
+    preferenceMatcherTool,
+    decisionFormatterTool,
+  ],
+  instructions: `
+    RULES:
+    - If user asks "X or Y", you MUST pick one
+    - Never say "both work" or "depends on preference"
+    - Explain your choice in 1-2 sentences
+    - Mention the rejected option as justification, not alternative
+  `,
+});
+```
+
+---
+
+#### 5. Final Composer → **Output Agent**
+
+**Current**: `composeFinalResponse()` in `utils/finalComposer.ts`
+
+**Agent Framework**:
+```typescript
+const composerAgent = createAgent({
+  name: "ResponseComposer",
+  description: "Creates Gen-Z friendly responses",
+  tools: [
+    toneRewriterTool,
+    hedgingRemoverTool,
+    engagementGeneratorTool,
+  ],
+  instructions: `
+    TONE: Gen-Z friendly, fun, supportive
+    LENGTH: 2-3 sentences max
+    STYLE: Use emojis sparingly (1-3)
+    FORBIDDEN: "I recommend", "I suggest", hedging language
+  `,
+});
+```
+
+---
+
+### Workflow Definition
+
+**Current**: Imperative steps in `route.ts`
+
+**Agent Framework** (Graph-based):
+```typescript
+const chatWorkflow = createWorkflow({
+  name: "MyMirroChat",
+  
+  nodes: {
+    classify: intentRouter,
+    fetchWardrobe: wardrobeFetchTool,
+    clarify: clarificationAgent,
+    analyze: analysisAgent,
+    decide: decisionAgent,
+    route: {
+      outfit: outfitAgent,
+      shopping: shoppingAgent,
+      trends: trendAgent,
+      travel: travelAgent,
+      general: generalChatAgent,
+    },
+    compose: composerAgent,
+    postProcess: postProcessorAgent,
+  },
+  
+  edges: [
+    { from: "START", to: "classify" },
+    { from: "classify", to: "fetchWardrobe", condition: "requiresWardrobe" },
+    { from: "classify", to: "clarify", condition: "needsClarification" },
+    { from: "clarify", to: "analyze" },
+    { from: "fetchWardrobe", to: "analyze" },
+    { from: "analyze", to: "decide" },
+    { from: "decide", to: "route" },
+    { from: "route.*", to: "compose" },
+    { from: "compose", to: "postProcess" },
+    { from: "postProcess", to: "END" },
+  ],
+});
+```
+
+---
+
+### Memory & State Management
+
+**Current**: `sessionCache` with manual key management
+
+**Agent Framework**:
+```typescript
+// Memory configuration
+const memory = createMemory({
+  type: "session", // or "persistent" for cross-session
+  
+  // What to remember
+  schema: {
+    fashionIntelligence: FashionIntelligenceSchema,
+    colorAnalysis: ColorAnalysisSchema,
+    canonicalMemory: CanonicalMemorySchema,
+    lastOutfits: OutfitArraySchema,
+    hasAskedClarification: z.boolean(),
+  },
+  
+  // TTL and eviction
+  ttl: "1h",
+  maxEntries: 1000,
+});
+
+// Attach to agents
+analysisAgent.useMemory(memory);
+composerAgent.useMemory(memory);
+```
+
+---
+
+### Tool Definitions
+
+Convert utility functions to tool format:
+
+```typescript
+// Example: Wardrobe Fetch Tool
+const wardrobeTool = createTool({
+  name: "fetch_wardrobe",
+  description: "Fetches user's wardrobe items from database",
+  parameters: z.object({
+    userId: z.string(),
+  }),
+  execute: async ({ userId }) => {
+    const result = await fetchWardrobeAndProfile(userId);
+    return {
+      items: result.wardrobe_items,
+      profile: result.profile,
+      coverage: computeWardrobeCoverage(result.wardrobe_items),
+    };
+  },
+});
+
+// Example: Outfit Generator Tool
+const outfitGeneratorTool = createTool({
+  name: "generate_outfits",
+  description: "Creates outfit suggestions from wardrobe",
+  parameters: z.object({
+    wardrobeItems: z.array(WardrobeItemSchema),
+    context: FashionIntelligenceSchema,
+    rules: RulesEngineOutputSchema,
+    count: z.number().default(4),
+  }),
+  execute: async ({ wardrobeItems, context, rules, count }) => {
+    return generateOutfitsV2(wardrobeItems, context, rules, count);
+  },
+});
+
+// Example: Decision Tool
+const decisionTool = createTool({
+  name: "make_decision",
+  description: "Makes decisive stylist choice between options",
+  parameters: z.object({
+    options: z.array(z.string()),
+    canonicalMemory: CanonicalMemorySchema.optional(),
+    userMessage: z.string(),
+  }),
+  execute: async ({ options, canonicalMemory, userMessage }) => {
+    return makeStylistDecision({
+      intent: "shopping_help",
+      options,
+      canonicalMemory,
+      userMessage,
+    });
+  },
+});
+```
+
+---
+
+### Migration Steps
+
+#### Phase 1: Extract Tools (Week 1-2)
+1. Convert each utility function to standalone tool
+2. Add proper TypeScript schemas for inputs/outputs
+3. Write unit tests for each tool
+4. Ensure tools are framework-agnostic
+
+#### Phase 2: Define Agents (Week 2-3)
+1. Create agent configurations for each domain
+2. Write agent instructions (system prompts)
+3. Assign tools to appropriate agents
+4. Test agents in isolation
+
+#### Phase 3: Build Workflow (Week 3-4)
+1. Define workflow graph
+2. Implement routing logic
+3. Connect agents with edges
+4. Add conditional paths
+
+#### Phase 4: Memory Integration (Week 4-5)
+1. Migrate session cache to framework memory
+2. Define memory schemas
+3. Test memory persistence
+4. Implement memory retrieval in agents
+
+#### Phase 5: Testing & Rollout (Week 5-6)
+1. Integration testing with full workflow
+2. A/B testing against current implementation
+3. Performance benchmarking
+4. Gradual rollout
+
+---
+
+### Framework-Specific Notes
+
+#### Mastra
+- Uses TypeScript-first approach
+- Built-in memory and tool abstractions
+- Graph-based workflow definition
+- Good for complex multi-agent scenarios
+
+#### LangChain/LangGraph
+- Mature ecosystem with many integrations
+- LangGraph for stateful workflows
+- Large community and documentation
+- Python-first but TypeScript support exists
+
+#### Vercel AI SDK
+- Native Next.js integration
+- Streaming-first design
+- Simple tool calling
+- Best for simpler use cases
+
+#### CrewAI
+- Multi-agent collaboration focus
+- Role-based agent definitions
+- Task delegation patterns
+- Python-only currently
+
+---
+
+### Key Considerations
+
+1. **Latency**: Agent frameworks add overhead. Optimize tool execution and caching.
+
+2. **Debugging**: Graph-based workflows are harder to debug. Use observability tools.
+
+3. **Testing**: Test agents and tools independently before integration.
+
+4. **Prompts**: Agent instructions are critical. Migrate and tune system prompts carefully.
+
+5. **Memory**: Ensure memory schemas match current data structures.
+
+6. **Rollback**: Keep current implementation running for fallback during migration.
+
+---
+
 ## Conclusion
 
-The MyMirro Chat API is a sophisticated AI fashion stylist that combines multiple analysis modules, intelligent caching, and confidence-aware behavior to provide personalized styling recommendations. The V2 architecture adds canonical memory, confidence scoring, and deterministic rules to ensure consistent, reliable, and context-aware responses.
+The MyMirro Chat API is a sophisticated AI fashion stylist that combines multiple analysis modules, intelligent caching, and confidence-aware behavior to provide personalized styling recommendations. 
+
+**V6 Architecture Highlights**:
+- LLM-only intent classification for accuracy
+- Conditional wardrobe fetching for efficiency
+- Stylist Decision Layer for decisive responses
+- Smart clarification (never repeat questions)
+- Engagement engine for user retention
+- Canonical decision examples for consistent tone
+- Compressed inputs for clarity
+- Hedging removal for authority
 
 The system is optimized for latency through intent-based execution, session caching, parallel processing, and merged LLM calls, resulting in fast response times while maintaining high-quality, personalized recommendations.
+
+The migration guide provides a roadmap for transitioning to modern AI orchestration frameworks while preserving the core functionality and optimizations.
 
